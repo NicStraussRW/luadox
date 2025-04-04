@@ -21,6 +21,7 @@ from typing import List, Optional
 from ..log import log
 from ..parse import *
 from ..reference import *
+from ..utils import files_str_to_list
 
 class Renderer:
     """
@@ -31,11 +32,8 @@ class Renderer:
         self.config = parser.config
         self.ctx = parser.ctx
 
-    def copy_file_from_config(self, section: str, option: str, outdir: str) -> None:
-        fnames = self.config.get(section, option, fallback='').split()
-        if not fnames:
-            return
-        for fname in fnames:
+    def copy_files_from_config(self, section: str, option: str, outdir: str) -> None:
+        for fname in files_str_to_list(self.config.get(section, option, fallback='')):
             if not os.path.exists(fname):
                 log.critical('%s file "%s" does not exist, skipping', option, fname)
                 continue

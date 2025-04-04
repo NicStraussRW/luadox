@@ -18,6 +18,7 @@ import sys
 import os
 import re
 import mimetypes
+import locale
 from contextlib import contextmanager
 from typing import Union, Tuple, List, Callable, Generator, Type, Optional
 
@@ -101,11 +102,13 @@ class HTMLRenderer(Renderer):
         search_template = self.config.get('project', 'search_template', fallback=None)
         sidebar_template = self.config.get('project', 'sidebar_template', fallback=None)
 
+        encoding = self.config.get('project', 'encoding', fallback=locale.getpreferredencoding())
+
         self._templates = {
-            'head': open(head_template, 'r', encoding='utf8').read() if head_template else assets.get('head.tmpl.html').decode('utf8'),
-            'foot': open(foot_template, 'r', encoding='utf8').read() if foot_template else assets.get('foot.tmpl.html').decode('utf8'),
-            'search': open(search_template, 'r', encoding='utf8').read() if search_template else assets.get('search.tmpl.html').decode('utf8'),
-            'sidebar': open(sidebar_template, 'r', encoding='utf8').read() if sidebar_template else assets.get('sidebar.tmpl.html').decode('utf8'),
+            'head': open(head_template, 'r', encoding=encoding).read() if head_template else assets.get('head.tmpl.html').decode(encoding),
+            'foot': open(foot_template, 'r', encoding=encoding).read() if foot_template else assets.get('foot.tmpl.html').decode(encoding),
+            'search': open(search_template, 'r', encoding=encoding).read() if search_template else assets.get('search.tmpl.html').decode(encoding),
+            'sidebar': open(sidebar_template, 'r', encoding=encoding).read() if sidebar_template else assets.get('sidebar.tmpl.html').decode(encoding),
         }
         self._assets_version = assets.hash()[:7]
 
@@ -290,14 +293,12 @@ class HTMLRenderer(Renderer):
         root = self._get_root_path()
         head: list[str] = []
 
-        css_files = self.config.get('project', 'css', fallback='').split()
-        for i, css in enumerate(css_files):
+        for css in files_str_to_list(self.config.get('project', 'css', fallback='')):
             # The stylesheet is always copied to doc root, so take only the filename
             _, css = os.path.split(css)
             head.append('<link href="{}{}?{}" rel="stylesheet" />'.format(root, css, self._assets_version))
 
-        js_files = self.config.get('project', 'js', fallback='').split()
-        for i, js in enumerate(js_files):
+        for js in files_str_to_list(self.config.get('project', 'js', fallback='')):
             # The script files are always copied to doc root, so take only the filename
             _, js = os.path.split(js)
             head.append('<script src="{}{}?{}"></script>'.format(root, js, self._assets_version))    
@@ -745,9 +746,9 @@ class HTMLRenderer(Renderer):
             log.warn('"out" is not defined in config file, assuming ./out/')
             outdir = 'out'
         os.makedirs(outdir, exist_ok=True)
-        self.copy_file_from_config('project', 'css', outdir)
-        self.copy_file_from_config('project', 'js', outdir)
-        self.copy_file_from_config('project', 'favicon', outdir)
+        self.copy_files_from_config('project', 'css', outdir)
+        self.copy_files_from_config('project', 'js', outdir)
+        self.copy_files_from_config('project', 'favicon', outdir)
 
         for ref in toprefs:
             if ref.userdata.get('empty') and ref.implicit:

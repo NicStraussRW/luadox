@@ -200,13 +200,13 @@ def main():
                    help='Custom JS file(s) (html renderer)')
     p.add_argument('--favicon', action='store', type=str, metavar='FILE',
                    help='Path to favicon file (html renderer)')
-    p.add_argument('--head_template', action='store', type=str, metavar='FILE',
+    p.add_argument('--head-template', action='store', type=str, metavar='FILE',
                    help='Path to custom head template (html renderer)')
-    p.add_argument('--foot_template', action='store', type=str, metavar='FILE',
+    p.add_argument('--foot-template', action='store', type=str, metavar='FILE',
                    help='Path to custom foot template (html renderer)')
-    p.add_argument('--search_template', action='store', type=str, metavar='FILE',
+    p.add_argument('--search-template', action='store', type=str, metavar='FILE',
                    help='Path to custom search template (html renderer)')    
-    p.add_argument('--sidebar_template', action='store', type=str, metavar='FILE',
+    p.add_argument('--sidebar-template', action='store', type=str, metavar='FILE',
                    help='Path to custom sidebar template (html renderer)')    
     p.add_argument('--nofollow', action='store_true',
                    help="Disable following of require()'d files (default false)")

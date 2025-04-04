@@ -15,6 +15,7 @@
 __all__ = [
     'Sentinel', 'Content', 'ContentFragment', 'Markdown', 'Admonition', 'SeeAlso',
     'recache', 'get_first_sentence', 'get_indent_level', 'strip_trailing_comment',
+    'files_str_to_list',
 ]
 
 import enum
@@ -22,7 +23,8 @@ import re
 import string
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Tuple, List, Callable, Optional, Pattern
+from typing import Tuple, List, Callable, Optional, Pattern, Generator
+import shlex
 
 # Common abbreviations with periods that are considered when determining what is the
 # first sentence of a markdown block.
@@ -219,3 +221,6 @@ def get_indent_level(s: str) -> int:
 def strip_trailing_comment(line: str) -> str:
     return recache(r'--.*').sub('', line)
 
+def files_str_to_list(files: str) -> Generator[str, None, None]:
+    for line in files.strip().splitlines():
+        yield from shlex.split(line)
