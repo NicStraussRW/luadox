@@ -911,7 +911,7 @@ class Parser:
 
                     if tag.snippet:
                         snippet_path = os.path.join(
-                            self.config.get('project', 'snippets_path'),
+                            self.config.get('project', 'snippet_path'),
                             tag.snippet
                         )
                         snippet_path = os.path.abspath(snippet_path)
