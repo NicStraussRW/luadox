@@ -908,6 +908,17 @@ class Parser:
                     # Ensure subsequent dedent is based on the first line of the code
                     # block
                     dedent = None
+
+                    if tag.snippet:
+                        snippet_path = os.path.join(
+                            self.config.get('project', 'snippets_path'),
+                            tag.snippet
+                        )
+                        snippet_path = os.path.abspath(snippet_path)
+                        with open(snippet_path, 'r') as handle:
+                            for line in handle.read().splitlines():
+                                content.md().append(line)
+
                 elif isinstance(tag, tags.AdmonitionTag):
                     heading = self.refs_to_markdown(tag.title or tag.type.title())
                     content.append(Admonition(tag.type, heading, tagcontent))

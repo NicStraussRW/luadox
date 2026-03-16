@@ -122,6 +122,7 @@ class OrderTag(Tag):
 @dataclass
 class CodeTag(Tag):
     lang: Optional[str] = None
+    snippet: Optional[str] = None
 
 @dataclass
 class UsageTag(CodeTag):
@@ -192,9 +193,10 @@ class TagParser:
         'type': (TypeTag, {'types': PipeList[str]}),
         'order': (OrderTag, {'whence': str, 'anchor': Optional[str]}),
 
-        'code': (CodeTag, {'lang': Optional[str]}),
-        'usage': (UsageTag, {'lang': Optional[str]}),
-        'example': (ExampleTag, {'lang': Optional[str]}),
+        'code': (CodeTag, {'lang': Optional[str], 'snippet': Optional[str]}),
+        'usage': (UsageTag, {'lang': Optional[str], 'snippet': Optional[str]}),
+        'example': (ExampleTag, {'lang': Optional[str], 'snippet': Optional[str]}),
+
         'warning': (WarningTag, {'title': Optional[VarString]}),
         'note': (NoteTag, {'title': Optional[VarString]}),
         'see': (SeeTag, {'refs': List[str]}),
