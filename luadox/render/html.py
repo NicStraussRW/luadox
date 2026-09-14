@@ -19,6 +19,7 @@ import os
 import re
 import mimetypes
 import locale
+from html import escape as html_escape
 from contextlib import contextmanager
 from typing import Union, Tuple, List, Callable, Generator, Type, Optional
 
@@ -169,7 +170,9 @@ class HTMLRenderer(Renderer):
         empty string when it has none.
         """
         version = ref.flags.get('since')
-        return '<span class="tag since">since {}</span>'.format(version) if version else ''
+        # Escape the version: it's free-form author text, not markup or a reference, so a
+        # stray '<', '&' or '@{...}' must render as literal text, not inject HTML.
+        return '<span class="tag since">since {}</span>'.format(html_escape(version)) if version else ''
 
     def _deprecated_marker(self, ref: Reference) -> str:
         """
@@ -530,7 +533,9 @@ class HTMLRenderer(Renderer):
                 # isn't valid HTML for headings to contain block elements.
                 heading.replace('<p>', '').replace('</p>', '')
             ))
-            out(self._since(colref))
+            since = self._since(colref)
+            if since:
+                out(since)
             out(self._permalink(colref.symbol))
             out('</h2>')
             out('<div class="inner">')
@@ -677,7 +682,9 @@ class HTMLRenderer(Renderer):
                         out('<span class="tag type">{}</span>'.format(types))
                     if ref.meta:
                         out('<span class="tag meta">{}</span>'.format(ref.meta))
-                    out(self._since(ref))
+                    since = self._since(ref)
+                    if since:
+                        out(since)
                     out(self._permalink(ref.name))
                     out('</dt>')
                     out('<dd>')
@@ -698,7 +705,9 @@ class HTMLRenderer(Renderer):
                     out('<span class="icon"></span><var>{}</var>({})'.format(ref.display, params))
                     if ref.meta:
                         out('<span class="tag meta">{}</span>'.format(ref.meta))
-                    out(self._since(ref))
+                    since = self._since(ref)
+                    if since:
+                        out(since)
                     out(self._permalink(ref.name))
                     out('</dt>')
                     out('<dd>')
