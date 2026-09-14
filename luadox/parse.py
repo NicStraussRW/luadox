@@ -27,7 +27,17 @@ from .reference import *
 from .utils import *
 
 # TODO: better vararg support
-ParseFuncResult = Tuple[Union[str, None], Union[List[str], None]] 
+ParseFuncResult = Tuple[Union[str, None], Union[List[str], None]]
+
+def is_integer_literal(value: Optional[str]) -> bool:
+    """
+    True if value is an integer Lua literal: a decimal or hexadecimal integer,
+    optionally signed.  @enum members mirror C++ enumerators, which are integral,
+    so a float, string, reference, call or expression is not a closed-enum value.
+    """
+    if not value:
+        return False
+    return bool(recache(r'''^[+-]?(?:0[xX][0-9a-fA-F]+|\d+)$''').match(value))
 
 # Maps collection tags to their typed Reference objects
 COLLECTION_TAGS: Dict[Type[tags.CollectionTag], Type[Reference]] = {
@@ -35,6 +45,7 @@ COLLECTION_TAGS: Dict[Type[tags.CollectionTag], Type[Reference]] = {
     tags.ClassTag: ClassRef,
     tags.ModuleTag: ModuleRef,
     tags.TableTag: TableRef,
+    tags.EnumTag: TableRef,
 }
 
 class Context:
@@ -185,21 +196,33 @@ class Parser:
         return name, arguments
 
 
-    def _parse_field(self, line: str) -> ParseFuncResult: 
+    def _parse_field(self, line: str) -> Tuple[Union[str, None], Union[str, None]]:
         """
         Looks for a field assignment in the given raw line of code, and returns the
-        name of the field, or a 2-tuple of Nones if no field was found.
-
-        A 2-tuple is returned to be consistent with other _parse_() functions,
-        but the second return value is always None.
+        name of the field and the complete literal value it is assigned, or None for
+        the value when the expression continues past this line (or is a function), so
+        a truncated fragment is never mistaken for a literal.
         """
+        def rhs(match: Match[str]) -> Union[str, None]:
+            # ',' and ';' are both legal table separators.
+            value = line[match.end():].strip().rstrip(',;').strip()
+            if (value.count('(') != value.count(')')
+                    or value.count('{') != value.count('}')
+                    or value.count('[') != value.count(']')
+                    or value.count('"') % 2 or value.count("'") % 2
+                    or value.endswith(('..', '=')) or value.startswith('function')):
+                # The expression continues on the next line (or the line was cut at a
+                # '--' inside a string, or the value is a function), so there is no
+                # usable literal here.
+                return None
+            return value or None
         # Fields in the form [foo] = bar
         m = recache(r'''\[([^]]+)\] *=''').search(line)
         if m:
-            return recache(r'''['"]''').sub('', m.group(1)), None
+            return recache(r'''['"]''').sub('', m.group(1)), rhs(m)
         m = recache(r'''\b([\S\.]+) *=''').search(line)
         if m:
-            return m.group(1), None
+            return m.group(1), rhs(m)
         else:
             return None, None
 
@@ -396,8 +419,25 @@ class Parser:
                     # Will decrement below if we don't end up handling this tag now.
                     ntags += 1
                     if isinstance(tag, tags.CollectionTag):
+                        if (isinstance(tag, tags.TableTag)
+                                and isinstance(scopes[-1], TableRef)
+                                and scopes[-1].flags.get('enum')):
+                            # A nested @table/@enum inside an @enum takes a constructor key
+                            # that can never be an integer member, and -- like an undocumented
+                            # member -- would drop out of the closed enumeration silently.
+                            # scopes[-1] is still the enclosing enum here (the nested scope
+                            # isn't pushed until below), which is the only place the nesting
+                            # is visible: the nested collection doesn't record it as a parent.
+                            self.diagnostics.add(
+                                'structure',
+                                '@enum {} cannot contain a nested {} ({}); enum members must '
+                                'be integer constants'.format(
+                                    scopes[-1].name,
+                                    'enum' if isinstance(tag, tags.EnumTag) else 'table',
+                                    tag.name),
+                                path, n)
                         ref = COLLECTION_TAGS[type(tag)].clone_from(
-                            ref, 
+                            ref,
                             line=n,
                             scopes=scopes,
                             symbol=tag.name,
@@ -424,6 +464,8 @@ class Parser:
                         # As with class above, replace scopes list.
                         scopes = [scopes[0], ref]
                     elif isinstance(tag, tags.TableTag):
+                        if isinstance(tag, tags.EnumTag):
+                            ref.flags['enum'] = True
                         scopes.append(ref)
                         parse_next_code_line = False
                     elif isinstance(tag, tags.FieldTag):
@@ -513,9 +555,26 @@ class Parser:
                         requires.append(m.group(1))
 
                     if ref is None:
+                        # Inside an @enum, a name assigned in the constructor is a real member
+                        # of the closed enumeration even without a doc comment: enum sources are
+                        # autogenerated from C++ enumerators, whose Doxygen comments are often
+                        # absent, so membership follows the assignment (as it does in C++), not
+                        # the documentation.  Emit it as a value-only field so it isn't silently
+                        # dropped -- a plain @table would skip an undocumented field here.
+                        enum_scope = scopes[-1]
+                        if isinstance(enum_scope, TableRef) and enum_scope.flags.get('enum'):
+                            name, value = self._parse_field(line)
+                            if name:
+                                field = FieldRef(
+                                    self.refs, file=path, line=n, scopes=scopes[:],
+                                    symbol=name, collection=collection, value=value,
+                                    diagnostics=self.diagnostics)
+                                self._add_reference(field, modref)
                         continue
 
-                    for refcls in (FieldRef, FunctionRef):
+                    # The second parse result is the argument list for a function
+                    # and the assigned value for a field.
+                    for refcls, kwarg in ((FieldRef, 'value'), (FunctionRef, 'extra')):
                         name, extra = getattr(self, '_parse_' + refcls.type)(line)
                         scope = scopes[-1]
                         if refcls == FieldRef and isinstance(scope, ModuleRef) and scope.name == name:
@@ -533,7 +592,7 @@ class Parser:
                                 # Create a shallow copy of current scopes so subsequent modifications
                                 # don't retroactively apply.
                                 file=path, line=n, scopes=scopes[:], symbol=name,
-                                collection=collection, extra=extra
+                                collection=collection, **{kwarg: extra}
                             )
                             break
                     if self._check_disconnected_reference(ref):
@@ -561,6 +620,65 @@ class Parser:
                 # explicitly defined, go ahead and add it now.
                 self._add_reference(ref)
         return requires
+
+
+    def validate_enums(self) -> None:
+        """
+        Reports @enum tables that can't form a closed enumeration.  Membership mirrors a
+        C++ enum: a member exists because it is assigned a value in the constructor, not
+        because it is documented -- enum sources are autogenerated and many enumerators
+        carry no doc comment.  Every member, documented or not, is emitted, so a renderer
+        with a native enum representation can treat membership as closed.
+
+        Documentation is the source's to decide, but it should be consistent per enum:
+
+          * a *partially* documented enum (some members carry a doc comment and some don't)
+            is a `structure` error -- for an autogenerated enum it means the C++ source
+            documents some enumerators but not others, which is a gap to close at the
+            source (document all members or none);
+          * an *entirely* undocumented enum is legitimate (a compact, autogenerated enum),
+            so it is only a soft `undocumented` diagnostic, separately suppressible via
+            `allow_incomplete = undocumented` for projects whose enums are generated.
+
+        We also report an @enum with no members at all (the tag landed on something that
+        isn't a table of integer constants) and any member not assigned an integer literal.
+        A member assigned twice surfaces as a `conflicts` diagnostic when it is added, and
+        a nested @table/@enum is rejected during parsing.
+        """
+        for colref in self.parsed[TableRef]:
+            if not colref.flags.get('enum'):
+                continue
+            # Resolve members exactly as the renderers do, so validation can't
+            # disagree with what is emitted.
+            members = self.get_elements_in_collection(FieldRef, colref)
+            if not members:
+                self.diagnostics.add(
+                    'structure',
+                    '@enum {} has no members; the tag must be on a table of integer '
+                    'constants'.format(colref.name),
+                    colref.file, colref.line)
+                continue
+            # A member is documented iff it carried a doc comment (raw_content); a value-only
+            # member synthesized from a bare assignment has none.
+            undocumented = [m for m in members if not m.raw_content]
+            if 0 < len(undocumented) < len(members):
+                for m in undocumented:
+                    self.diagnostics.add(
+                        'structure',
+                        '@enum member {} has no doc comment, but other members of {} are '
+                        'documented; document all members or none'.format(m.name, colref.name),
+                        m.file, m.line)
+            elif len(undocumented) == len(members):
+                self.diagnostics.add(
+                    'undocumented',
+                    '@enum {} has no documented members'.format(colref.name),
+                    colref.file, colref.line)
+            for member in members:
+                if not is_integer_literal(member.value):
+                    self.diagnostics.add(
+                        'structure',
+                        '@enum member {} is not assigned an integer value'.format(member.name),
+                        member.file, member.line)
 
 
     def parse_manual(self, name: str, f: IO[str]) -> None:

@@ -132,7 +132,8 @@ class JSONRenderer(Renderer):
 
         for colref in topref.collections:
             self.ctx.update(ref=colref)
-            section = self._render_section(colref, compact=colref.compact)
+            section = self._render_section(colref, compact=colref.compact,
+                                           enum=colref.flags.get('enum'))
             sections.append(section)
 
             fields: List[Dict[str, Any]] = []
@@ -182,6 +183,8 @@ class JSONRenderer(Renderer):
         if 'deprecated' in ref.flags:
             # Presence signals deprecation; the value is the explanation (or true when bare).
             field['deprecated'] = self.parser.refs_to_markdown(ref.flags['deprecated']) or True
+        if ref.value is not None:
+            field['value'] = ref.value
         content = self._render_content(ref.content)
         if content:
             field['content'] = content
