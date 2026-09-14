@@ -1143,6 +1143,24 @@ class Parser:
                 elif isinstance(tag, tags.SeeTag):
                     refs = [self.resolve_ref(see) for see in tag.refs]
                     content.append(SeeAlso([ref.id for ref in refs if ref]))
+                elif isinstance(tag, tags.SinceTag):
+                    # Content-side handling for manual pages, whose tags aren't pre-parsed:
+                    # @since is a flag rendered as a stamp on the section heading (as on
+                    # source elements), so set it on the current section ref -- with the same
+                    # single-version rule -- rather than emitting content.
+                    secref = self.ctx.ref
+                    if not tag.version:
+                        self.diagnostics.add(
+                            'structure', '@since requires a version, ignoring',
+                            self.ctx.file, n)
+                    elif secref is not None and 'since' in secref.flags:
+                        self.diagnostics.add(
+                            'structure',
+                            'repeated @since (already {}), ignoring {}'.format(
+                                secref.flags['since'], tag.version),
+                            self.ctx.file, n)
+                    elif secref is not None:
+                        secref.flags['since'] = tag.version
                 else:
                     # An UnrecognizedTag's .type is the constant 'unrecognized'; its real
                     # spelling lives in .name.  A recognized-but-misplaced tag has no .name,

@@ -593,7 +593,12 @@ end
 
 Unlike `@deprecated`, which renders a prominent admonition, `@since` renders as an
 unobtrusive *since* stamp beside the element (and is carried in the json/yaml output as a
-`since` field), since it is reference information rather than a warning.
+`since` field), since it is reference information rather than a warning.  It applies to
+elements documented in Lua source and to manually-authored page headings alike.
+
+An element records a single version, so LuaDox reports a `structure` diagnostic for a
+`@since` with no version and for a repeated `@since` on the same element (the first
+version is kept).
 
 ### `@within`
 

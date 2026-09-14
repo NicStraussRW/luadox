@@ -505,6 +505,9 @@ class HTMLRenderer(Renderer):
             # Manual pages only contain SectionRefs
             assert(isinstance(secref, SectionRef))
             out('<h{} id="{}">{}'.format(secref.level, secref.symbol, secref.heading))
+            since = self._since(secref)
+            if since:
+                out(since)
             out(self._permalink(secref.symbol))
             out('</h{}>'.format(secref.level))
             out(self._content_to_html(secref.content))

@@ -566,8 +566,11 @@ dl.functions dt span.icon::after {
 }
 
 /* @since renders as a lightweight, muted version stamp everywhere -- quiet
-   metadata, consistent between a heading and a member, never a pill and no icon. */
-h2 span.tag.since {
+   metadata, consistent between a heading (source or manual page) and a member,
+   never a pill and no icon. */
+h1 span.tag.since,
+h2 span.tag.since,
+h3 span.tag.since {
     font-size: 60%;
     font-weight: normal;
     color: #888;
