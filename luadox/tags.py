@@ -65,6 +65,10 @@ class TableTag(CollectionTag):
     pass
 
 @dataclass
+class EnumTag(TableTag):
+    pass
+
+@dataclass
 class WithinTag(Tag):
     name: str
 
@@ -185,6 +189,7 @@ class TagParser:
         'alias': (AliasTag, {'name': str}),
         'compact': (CompactTag, {'elements': Optional[List[str]]}),
         'fullnames': (FullnamesTag, {}),
+        'enum': (EnumTag, {'name': str}),
         'inherits': (InheritsTag, {'superclasses': List[str]}),
         'meta': (MetaTag, {'value': str}),
         'scope': (ScopeTag, {'name': str}),
