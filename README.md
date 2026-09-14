@@ -298,6 +298,7 @@ Here is a summary of LuaDox tags, with more details below the table:
 | `@rename` | Element modifier | Overrides *both* the display name and actual name of the element, affecting both its presentation in rendered pages as well as how the element is referenced. | `@rename different_function` |
 | `@scope` | Element modifier | Changes the scope of non top-level elements (i.e. functions, fields, and tables, but not classes or modules), affecting both the element's display name and reference name.  A special scope `.` can be used to treat the element as global and will prevent its name from being qualified by the collection it belongs to.  Unlike `@within`, the element is still documented in the same place (class or module page), but its fully qualified name will reflect the given scope name.   | `@scope .` |
 | `@alias` | Element modifier | Adds another name by which the element can be referenced. Does not affect the display name. | `@alias fooconsts` |
+| `@deprecated` | Element modifier | Marks the element as deprecated, with an optional explanation. Renders as a leading Deprecated admonition; the deprecated flag is also carried in the json/yaml output. | `@deprecated Use newThing instead.` |
 | `@code` | Code block | Creates a code block with Lua syntax highlighting.  Any contents indented below the `@code` line will be included in the code block. | (See below.) |
 | `@example` | Code block | Like `@code` but adds an "Example" heading just above the code block | (See `@code`) |
 | `@usage` | Code block | Like `@code` but adds an "Usage" heading just above the code block | (See `@code`) |
@@ -391,6 +392,29 @@ xyz.os = {
     linux = (_os == 'lin' or _os == 'oth'),
 }
 ```
+
+### `@deprecated`
+
+Marks the documented element as deprecated, with an optional explanation that may
+contain references:
+
+```lua
+--- Old way to do the thing.
+--- @deprecated Use @{newThing} instead.
+function Api:oldThing()
+end
+```
+
+The explanation is the rest of the tag's line; repeat `@deprecated` to give several
+reasons.  Every renderer shows a leading *Deprecated* admonition with the explanation,
+and the json and yaml renderers additionally carry a `deprecated` field on the element
+so it can be detected without parsing the admonition.  When migrating existing
+hand-written "deprecated" warnings to the tag, migrate each element in one step -- an
+element carrying both spellings renders two admonitions.
+
+In a docstring the explanation is the tag's line only; an indented continuation line
+falls into the element body rather than the admonition.  On a manually-authored page
+`@deprecated` is a content tag, so an indented continuation does nest inside the box.
 
 ### `@enum`
 
