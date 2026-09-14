@@ -469,6 +469,12 @@ div.admonition div.body {
     padding: 0;
 }
 
+/* A title-only admonition (e.g. a bare @deprecated) has no body below the title,
+   so it shouldn't keep the divider the title draws between itself and a body. */
+div.admonition > div.title:last-child {
+    border-bottom: none;
+}
+
 
 div.warning {
     border: 1px solid #900000;
@@ -483,6 +489,36 @@ div.warning > div.title {
 div.note > div.title {
     background-color: #70A070;
     border-bottom: 1px solid #609060;
+}
+
+/* @deprecated has its own amber styling, distinct from a red @warning. */
+div.deprecated {
+    border: 1px solid #8a6d00;
+    background-color: #fdf3d7;
+}
+
+div.deprecated > div.title {
+    background-color: #b8860b;
+    border-bottom: 1px solid #8a6d00;
+}
+
+div.deprecated > div.title::before {
+    content: "⚠ ";
+}
+
+/* Compact synopsis marker for a @deprecated element (the full box won't fit a row). */
+td.name span.tag.deprecated {
+    font-size: 70%;
+    font-weight: normal;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #8a6d00;
+    border: 1px solid #8a6d00;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 0.6em;
+    vertical-align: middle;
+    white-space: nowrap;
 }
 
 dl.fields dt span.icon::after {
