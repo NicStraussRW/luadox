@@ -19,6 +19,7 @@ import os
 import re
 import mimetypes
 import locale
+from html import escape as html_escape
 from contextlib import contextmanager
 from typing import Union, Tuple, List, Callable, Generator, Type, Optional
 
@@ -163,6 +164,44 @@ class HTMLRenderer(Renderer):
         """
         return '<a class="permalink" href="#{}" title="Permalink to this definition">¶</a>'.format(id)
 
+    def _since(self, ref: Reference) -> str:
+        """
+        Returns a lightweight 'since <version>' tag for an element carrying @since, or an
+        empty string when it has none.
+        """
+        version = ref.flags.get('since')
+        # Escape the version: it's free-form author text, not markup or a reference, so a
+        # stray '<', '&' or '@{...}' must render as literal text, not inject HTML.
+        return '<span class="tag since">since {}</span>'.format(html_escape(version)) if version else ''
+
+    def _deprecated_marker(self, ref: Reference) -> str:
+        """
+        A compact 'deprecated' tag for a synopsis row, so a deprecated element is flagged
+        where the full admonition would not fit.
+        """
+        return '<span class="tag deprecated">deprecated</span>' if 'deprecated' in ref.flags else ''
+
+    def _compact_synopsis_content(self, ref: Reference) -> str:
+        """
+        Renders a compact row's content.  A compact row has no detail box, so a leading
+        Deprecated admonition is unboxed to plain text (the name-cell marker already flags
+        it) — keeping its explanation without ballooning the one-line cell.
+        """
+        content = ref.content
+        if 'deprecated' in ref.flags and content and isinstance(content[0], Admonition):
+            explanation = self._content_to_html(content[0].content)
+            return explanation + self._content_to_html(Content(content[1:]))
+        return self._content_to_html(content)
+
+    def _enum_value(self, colref: Reference, ref: Reference) -> str:
+        """
+        Returns the ' = <value>' HTML suffix for a member of an @enum table, or an
+        empty string when the collection is not an enum or no literal was captured.
+        """
+        if colref.flags.get('enum') and ref.value:
+            return ' = <span class="value">{}</span>'.format(ref.value)
+        return ''
+
     def _markdown_to_html(self, md: str) -> str:
         """
         Renders the given markdown as HTML and returns the result.
@@ -177,8 +216,10 @@ class HTMLRenderer(Renderer):
             if isinstance(elem, Markdown):
                 output.append(self._markdown_to_html(elem.get()))
             elif isinstance(elem, Admonition):
-                inner = self._content_to_html(elem.content)
-                output.append(f'<div class="admonition {elem.type}"><div class="title">{elem.title}</div><div class="body">{inner.strip()}\n</div></div>')
+                inner = self._content_to_html(elem.content).strip()
+                # An admonition with no body (e.g. a bare @deprecated) is just its title.
+                body = f'<div class="body">{inner}\n</div>' if inner else ''
+                output.append(f'<div class="admonition {elem.type}"><div class="title">{elem.title}</div>{body}</div>')
             elif isinstance(elem, SeeAlso):
                 refs = [self.parser.refs_by_id[id] for id in elem.refs]
                 md = ', '.join(self.parser.render_ref_markdown(ref) for ref in refs)
@@ -464,6 +505,9 @@ class HTMLRenderer(Renderer):
             # Manual pages only contain SectionRefs
             assert(isinstance(secref, SectionRef))
             out('<h{} id="{}">{}'.format(secref.level, secref.symbol, secref.heading))
+            since = self._since(secref)
+            if since:
+                out(since)
             out(self._permalink(secref.symbol))
             out('</h{}>'.format(secref.level))
             out(self._content_to_html(secref.content))
@@ -492,6 +536,9 @@ class HTMLRenderer(Renderer):
                 # isn't valid HTML for headings to contain block elements.
                 heading.replace('<p>', '').replace('</p>', '')
             ))
+            since = self._since(colref)
+            if since:
+                out(since)
             out(self._permalink(colref.symbol))
             out('</h2>')
             out('<div class="inner">')
@@ -511,6 +558,15 @@ class HTMLRenderer(Renderer):
                         prefix = (('&nbsp;'*(n-1)*6) + '&nbsp;└─ ') if n > 0 else ''
                         out('<li class="class{}">{}<span>{}</span></li>'.format(self_class, prefix, html))
                     out('</ul>')
+                    out('</div>')
+                # For a class with several direct parents, the linear hierarchy above shows
+                # only the first; list all of them so multiple inheritance is visible.
+                parents = colref.parents
+                if len(parents) > 1:
+                    links = ', '.join(self._types_to_html([ref.name]) for ref in parents)
+                    out('<div class="inherits">')
+                    out('<div class="heading">Inherits</div>')
+                    out('<div>{}</div>'.format(links))
                     out('</div>')
 
             if colref.content:
@@ -555,10 +611,10 @@ class HTMLRenderer(Renderer):
                     for ref in colref.fields:
                         out('<tr>')
                         if not fields_compact:
-                            out('<td class="name"><a href="#{}"><var>{}</var></a></td>'.format(ref.name, ref.title))
+                            out('<td class="name"><a href="#{}"><var>{}</var></a>{}{}</td>'.format(ref.name, ref.title, self._enum_value(colref, ref), self._deprecated_marker(ref)))
                         else:
                             link = self._permalink(ref.name)
-                            out('<td class="name"><var id="{}">{}</var>{}</td>'.format(ref.name, ref.title, link))
+                            out('<td class="name"><var id="{}">{}</var>{}{}{}{}</td>'.format(ref.name, ref.title, self._enum_value(colref, ref), self._deprecated_marker(ref), self._since(ref), link))
                         nmeta = fields_meta_columns
                         if ref.types:
                             types = self._types_to_html(ref.types)
@@ -574,9 +630,9 @@ class HTMLRenderer(Renderer):
                             nmeta -= 1
 
                         if not fields_compact:
-                            html = self._markdown_to_html(ref.content.get_first_sentence())
+                            html = self._markdown_to_html(ref.content.get_first_sentence(skip_leading=True))
                         else:
-                            html = self._content_to_html(ref.content)
+                            html = self._compact_synopsis_content(ref)
                         if html:
                             out('<td class="doc">{}</td>'.format(html))
                         out('</tr>')
@@ -591,12 +647,12 @@ class HTMLRenderer(Renderer):
                         # For compact view, remove topsym prefix from symbol
                         display = ref.display_compact if isinstance(ref.scope, ClassRef) else ref.title
                         if not functions_compact:
-                            out('<td class="name"><a href="#{}"><var>{}</var></a>()</td>'.format(ref.name, display))
+                            out('<td class="name"><a href="#{}"><var>{}</var></a>(){}</td>'.format(ref.name, display, self._deprecated_marker(ref)))
                         else:
                             link = self._permalink(ref.name)
                             params = ', '.join('<em>{}</em>'.format(param) for param, _, _ in ref.params)
-                            html = '<td class="name"><var id="{}">{}</var>({}){}</td>'
-                            out(html.format(ref.name, display, params, link))
+                            html = '<td class="name"><var id="{}">{}</var>({}){}{}{}</td>'
+                            out(html.format(ref.name, display, params, self._deprecated_marker(ref), self._since(ref), link))
                         meta = functions_meta_columns
                         if ref.meta:
                             out('<td class="meta">{}</td>'.format(ref.meta))
@@ -606,9 +662,9 @@ class HTMLRenderer(Renderer):
                             meta -= 1
                     
                         if not functions_compact:
-                            html = self._markdown_to_html(ref.content.get_first_sentence())
+                            html = self._markdown_to_html(ref.content.get_first_sentence(skip_leading=True))
                         else:
-                            html = self._content_to_html(ref.content)
+                            html = self._compact_synopsis_content(ref)
                         out('<td class="doc">{}</td>'.format(html))
                         out('</tr>')
                     out('</table>')
@@ -623,12 +679,15 @@ class HTMLRenderer(Renderer):
                 out('<dl class="fields">')
                 for ref in colref.fields:
                     out('<dt id="{}">'.format(ref.name))
-                    out('<span class="icon"></span><var>{}</var>'.format(ref.display))
+                    out('<span class="icon"></span><var>{}</var>{}'.format(ref.display, self._enum_value(colref, ref)))
                     if ref.types:
                         types = self._types_to_html(ref.types)
                         out('<span class="tag type">{}</span>'.format(types))
                     if ref.meta:
                         out('<span class="tag meta">{}</span>'.format(ref.meta))
+                    since = self._since(ref)
+                    if since:
+                        out(since)
                     out(self._permalink(ref.name))
                     out('</dt>')
                     out('<dd>')
@@ -649,6 +708,9 @@ class HTMLRenderer(Renderer):
                     out('<span class="icon"></span><var>{}</var>({})'.format(ref.display, params))
                     if ref.meta:
                         out('<span class="tag meta">{}</span>'.format(ref.meta))
+                    since = self._since(ref)
+                    if since:
+                        out(since)
                     out(self._permalink(ref.name))
                     out('</dt>')
                     out('<dd>')
@@ -695,11 +757,17 @@ class HTMLRenderer(Renderer):
             if typ == SectionRef and not isinstance(ref.topref, ManualRef):
                 # Non-manual sections typically use the first sentence as the section
                 # title.  This heuristic uses the first sentence only if it's less than 80
-                # characters, otherwise falls back to the section title.
-                first, remaining = get_first_sentence(text)
+                # characters, otherwise falls back to the section title.  Leading
+                # admonitions (e.g. a prerendered Deprecated box) are not the summary,
+                # so they stay in the body text rather than becoming the title.
+                lead = Content()
+                body = Content(ref.content)
+                while body and isinstance(body[0], Admonition):
+                    lead.append(body.pop(0))
+                first, remaining = get_first_sentence(self._content_to_text(body))
                 if len(first) < 80:
                     title = first
-                    text = remaining
+                    text = (self._content_to_text(lead) + ' ' + remaining).strip()
             text = text.replace('"', '\\"').replace('\n', ' ')
             title = title.replace('"', '\\"').replace('\n', ' ')
             if typ == ModuleRef:

@@ -27,7 +27,17 @@ from .reference import *
 from .utils import *
 
 # TODO: better vararg support
-ParseFuncResult = Tuple[Union[str, None], Union[List[str], None]] 
+ParseFuncResult = Tuple[Union[str, None], Union[List[str], None]]
+
+def is_integer_literal(value: Optional[str]) -> bool:
+    """
+    True if value is an integer Lua literal: a decimal or hexadecimal integer,
+    optionally signed.  @enum members mirror C++ enumerators, which are integral,
+    so a float, string, reference, call or expression is not a closed-enum value.
+    """
+    if not value:
+        return False
+    return bool(recache(r'''^[+-]?(?:0[xX][0-9a-fA-F]+|\d+)$''').match(value))
 
 # Maps collection tags to their typed Reference objects
 COLLECTION_TAGS: Dict[Type[tags.CollectionTag], Type[Reference]] = {
@@ -35,6 +45,7 @@ COLLECTION_TAGS: Dict[Type[tags.CollectionTag], Type[Reference]] = {
     tags.ClassTag: ClassRef,
     tags.ModuleTag: ModuleRef,
     tags.TableTag: TableRef,
+    tags.EnumTag: TableRef,
 }
 
 class Context:
@@ -175,7 +186,8 @@ class Parser:
             # The function signature is spread across multiple lines
             n, nextline = self._next_line()
             if nextline is None:
-                log.error('%s:%s: function definition is truncated', self.ctx.file, n)
+                self.diagnostics.add(
+                    'structure', 'function definition is truncated', self.ctx.file, n)
                 return None, None
             m = recache(r'''([^)]*)(\))?''').search(nextline)
             if m:
@@ -184,21 +196,33 @@ class Parser:
         return name, arguments
 
 
-    def _parse_field(self, line: str) -> ParseFuncResult: 
+    def _parse_field(self, line: str) -> Tuple[Union[str, None], Union[str, None]]:
         """
         Looks for a field assignment in the given raw line of code, and returns the
-        name of the field, or a 2-tuple of Nones if no field was found.
-
-        A 2-tuple is returned to be consistent with other _parse_() functions,
-        but the second return value is always None.
+        name of the field and the complete literal value it is assigned, or None for
+        the value when the expression continues past this line (or is a function), so
+        a truncated fragment is never mistaken for a literal.
         """
+        def rhs(match: Match[str]) -> Union[str, None]:
+            # ',' and ';' are both legal table separators.
+            value = line[match.end():].strip().rstrip(',;').strip()
+            if (value.count('(') != value.count(')')
+                    or value.count('{') != value.count('}')
+                    or value.count('[') != value.count(']')
+                    or value.count('"') % 2 or value.count("'") % 2
+                    or value.endswith(('..', '=')) or value.startswith('function')):
+                # The expression continues on the next line (or the line was cut at a
+                # '--' inside a string, or the value is a function), so there is no
+                # usable literal here.
+                return None
+            return value or None
         # Fields in the form [foo] = bar
         m = recache(r'''\[([^]]+)\] *=''').search(line)
         if m:
-            return recache(r'''['"]''').sub('', m.group(1)), None
+            return recache(r'''['"]''').sub('', m.group(1)), rhs(m)
         m = recache(r'''\b([\S\.]+) *=''').search(line)
         if m:
-            return m.group(1), None
+            return m.group(1), rhs(m)
         else:
             return None, None
 
@@ -220,13 +244,19 @@ class Parser:
         if ref.userdata.get('added'):
             # Reference was already added. This also indicates a bug, but it's not fatal
             # so just log the error.
-            log.error('%s:%s: reference "%s" with the same name already exists', ref.file, ref.line, ref.name)
+            self.diagnostics.add(
+                'conflicts',
+                'reference "{}" with the same name already exists'.format(ref.name),
+                ref.file, ref.line)
             return
 
         # Register the class, module, or manual page as a top-level symbol
         if isinstance(ref, TopRef):
             if ref.name in self.topsyms:
-                log.error('%s:%s: %s conflicts with another class or module', ref.file, ref.line, ref.name)
+                self.diagnostics.add(
+                    'conflicts',
+                    '{} conflicts with another class or module'.format(ref.name),
+                    ref.file, ref.line)
             else:
                 self.topsyms[ref.name] = ref
         else:
@@ -277,8 +307,11 @@ class Parser:
             if not conflict and not isinstance(ref, SectionRef):
                 conflict = self.refs[ref.name]
             if conflict and conflict != ref:
-                log.error('%s:%s: %s "%s" conflicts with %s name at %s:%s',
-                          ref.file, ref.line, ref.type, ref.name, conflict.type, conflict.file, conflict.line)
+                self.diagnostics.add(
+                    'conflicts',
+                    '{} "{}" conflicts with {} name at {}:{}'.format(
+                        ref.type, ref.name, conflict.type, conflict.file, conflict.line),
+                    ref.file, ref.line)
         else:
             self.refs[ref.name] = ref
             if ref.id in self.refs_by_id:
@@ -299,7 +332,10 @@ class Parser:
             # somewhat pointlessly.
             content = ''.join(line.lstrip('-').strip() for (_, line, _) in ref.raw_content)
             if content:
-                log.warning('%s:%s: comment block is not connected with any section, ignoring', ref.file, ref.line)
+                self.diagnostics.add(
+                    'structure',
+                    'comment block is not connected with any section, ignoring',
+                    ref.file, ref.line)
         return False
 
     def parse_source(self, f: IO[str]) -> List[str]:
@@ -331,7 +367,8 @@ class Parser:
         else:
             modname = fname.replace('.lua', '')
         # Reference object for last section, defaulting to one for the module itself
-        modref = ModuleRef(self.refs, file=path, line=1, symbol=modname, implicit=True, level=-1)
+        modref = ModuleRef(self.refs, file=path, line=1, symbol=modname, implicit=True, level=-1,
+                           diagnostics=self.diagnostics)
         scopes: list[Reference] = [modref]
 
         # List of modules that were discovered via a 'require' statement in the given
@@ -367,7 +404,8 @@ class Parser:
                 # appropriate typed ref.  The Reference subclass instance is finally added
                 # when the comment block is terminated (either by a blank line or a line
                 # of code).
-                ref = Reference(self.refs, file=path, line=n, scopes=scopes)
+                ref = Reference(self.refs, file=path, line=n, scopes=scopes,
+                                diagnostics=self.diagnostics)
                 self.ctx.update(ref=ref)
             comment = line.startswith('--')
             if comment and ref:
@@ -381,8 +419,25 @@ class Parser:
                     # Will decrement below if we don't end up handling this tag now.
                     ntags += 1
                     if isinstance(tag, tags.CollectionTag):
+                        if (isinstance(tag, tags.TableTag)
+                                and isinstance(scopes[-1], TableRef)
+                                and scopes[-1].flags.get('enum')):
+                            # A nested @table/@enum inside an @enum takes a constructor key
+                            # that can never be an integer member, and -- like an undocumented
+                            # member -- would drop out of the closed enumeration silently.
+                            # scopes[-1] is still the enclosing enum here (the nested scope
+                            # isn't pushed until below), which is the only place the nesting
+                            # is visible: the nested collection doesn't record it as a parent.
+                            self.diagnostics.add(
+                                'structure',
+                                '@enum {} cannot contain a nested {} ({}); enum members must '
+                                'be integer constants'.format(
+                                    scopes[-1].name,
+                                    'enum' if isinstance(tag, tags.EnumTag) else 'table',
+                                    tag.name),
+                                path, n)
                         ref = COLLECTION_TAGS[type(tag)].clone_from(
-                            ref, 
+                            ref,
                             line=n,
                             scopes=scopes,
                             symbol=tag.name,
@@ -409,6 +464,8 @@ class Parser:
                         # As with class above, replace scopes list.
                         scopes = [scopes[0], ref]
                     elif isinstance(tag, tags.TableTag):
+                        if isinstance(tag, tags.EnumTag):
+                            ref.flags['enum'] = True
                         scopes.append(ref)
                         parse_next_code_line = False
                     elif isinstance(tag, tags.FieldTag):
@@ -419,7 +476,8 @@ class Parser:
                         # fact.
                         field = FieldRef(
                             self.refs, file=path, line=n, scopes=scopes[:],
-                            symbol=tag.name, collection=collection
+                            symbol=tag.name, collection=collection,
+                            diagnostics=self.diagnostics
                         )
                         field.raw_content.append((n, tag.desc, []))
                         self._add_reference(field, modref)
@@ -429,10 +487,36 @@ class Parser:
                         ref.flags['compact'] = tag.elements
                     elif isinstance(tag, tags.FullnamesTag):
                         ref.flags['fullnames'] = True
+                    elif isinstance(tag, tags.DeprecatedTag):
+                        # Accumulate explanations across repeated @deprecated tags rather
+                        # than overwriting, so none is silently dropped.
+                        parts = [p for p in (ref.flags.get('deprecated'), tag.desc) if p]
+                        ref.flags['deprecated'] = '\n\n'.join(parts)
                     elif isinstance(tag, tags.MetaTag):
                         ref.flags['meta'] = tag.value
+                    elif isinstance(tag, tags.SinceTag):
+                        if not tag.version:
+                            self.diagnostics.add(
+                                'structure',
+                                '@since requires a version, ignoring',
+                                path, n)
+                        elif 'since' in ref.flags:
+                            # @since records the single version an element first appeared
+                            # in; a repeat is an error, so keep the first and report the
+                            # extra rather than silently overwriting it.
+                            self.diagnostics.add(
+                                'structure',
+                                'repeated @since (already {}), ignoring {}'.format(
+                                    ref.flags['since'], tag.version),
+                                path, n)
+                        else:
+                            ref.flags['since'] = tag.version
                     elif isinstance(tag, tags.InheritsTag):
-                        ref.flags['inherits'] = tag.superclass
+                        # Accumulate parents across repeated @inherits tags and a single
+                        # multi-parent tag, splitting on commas and dropping empties.
+                        parents = ref.flags.setdefault('inherits', [])
+                        parents.extend(part for name in tag.superclasses
+                                       for part in name.split(',') if part)
                     elif isinstance(tag, tags.RenameTag):
                         ref.flags['rename'] = tag.name
                         ref.clear_cache()
@@ -448,7 +532,10 @@ class Parser:
                     elif isinstance(tag, tags.OrderTag):
                         ref.flags['order'] = tag
                     elif isinstance(tag, tags.UnrecognizedTag):
-                        log.warning('%s:%s: unrecognized tag @%s, ignoring', path, n, tag.name)
+                        self.diagnostics.add(
+                            'structure',
+                            'unrecognized tag @{}, ignoring'.format(tag.name),
+                            path, n)
                     elif not isinstance(tag, tags.SectionTag):
                         unprocessed_tags.append(tag)
                         ntags -= 1
@@ -485,9 +572,26 @@ class Parser:
                         requires.append(m.group(1))
 
                     if ref is None:
+                        # Inside an @enum, a name assigned in the constructor is a real member
+                        # of the closed enumeration even without a doc comment: enum sources are
+                        # autogenerated from C++ enumerators, whose Doxygen comments are often
+                        # absent, so membership follows the assignment (as it does in C++), not
+                        # the documentation.  Emit it as a value-only field so it isn't silently
+                        # dropped -- a plain @table would skip an undocumented field here.
+                        enum_scope = scopes[-1]
+                        if isinstance(enum_scope, TableRef) and enum_scope.flags.get('enum'):
+                            name, value = self._parse_field(line)
+                            if name:
+                                field = FieldRef(
+                                    self.refs, file=path, line=n, scopes=scopes[:],
+                                    symbol=name, collection=collection, value=value,
+                                    diagnostics=self.diagnostics)
+                                self._add_reference(field, modref)
                         continue
 
-                    for refcls in (FieldRef, FunctionRef):
+                    # The second parse result is the argument list for a function
+                    # and the assigned value for a field.
+                    for refcls, kwarg in ((FieldRef, 'value'), (FunctionRef, 'extra')):
                         name, extra = getattr(self, '_parse_' + refcls.type)(line)
                         scope = scopes[-1]
                         if refcls == FieldRef and isinstance(scope, ModuleRef) and scope.name == name:
@@ -496,15 +600,16 @@ class Parser:
                             pass
                         elif name:
                             if ref.symbol:
-                                log.error(
-                                    '%s:%s: %s defined before %s %s has terminated; separate with a blank line',
-                                    ref.file, ref.line, refcls.type, ref.type, ref.name
-                                )
+                                self.diagnostics.add(
+                                    'structure',
+                                    '{} defined before {} {} has terminated; separate with '
+                                    'a blank line'.format(refcls.type, ref.type, ref.name),
+                                    ref.file, ref.line)
                             ref = refcls.clone_from(ref,
                                 # Create a shallow copy of current scopes so subsequent modifications
                                 # don't retroactively apply.
                                 file=path, line=n, scopes=scopes[:], symbol=name,
-                                collection=collection, extra=extra
+                                collection=collection, **{kwarg: extra}
                             )
                             break
                     if self._check_disconnected_reference(ref):
@@ -534,6 +639,65 @@ class Parser:
         return requires
 
 
+    def validate_enums(self) -> None:
+        """
+        Reports @enum tables that can't form a closed enumeration.  Membership mirrors a
+        C++ enum: a member exists because it is assigned a value in the constructor, not
+        because it is documented -- enum sources are autogenerated and many enumerators
+        carry no doc comment.  Every member, documented or not, is emitted, so a renderer
+        with a native enum representation can treat membership as closed.
+
+        Documentation is the source's to decide, but it should be consistent per enum:
+
+          * a *partially* documented enum (some members carry a doc comment and some don't)
+            is a `structure` error -- for an autogenerated enum it means the C++ source
+            documents some enumerators but not others, which is a gap to close at the
+            source (document all members or none);
+          * an *entirely* undocumented enum is legitimate (a compact, autogenerated enum),
+            so it is only a soft `undocumented` diagnostic, separately suppressible via
+            `allow_incomplete = undocumented` for projects whose enums are generated.
+
+        We also report an @enum with no members at all (the tag landed on something that
+        isn't a table of integer constants) and any member not assigned an integer literal.
+        A member assigned twice surfaces as a `conflicts` diagnostic when it is added, and
+        a nested @table/@enum is rejected during parsing.
+        """
+        for colref in self.parsed[TableRef]:
+            if not colref.flags.get('enum'):
+                continue
+            # Resolve members exactly as the renderers do, so validation can't
+            # disagree with what is emitted.
+            members = self.get_elements_in_collection(FieldRef, colref)
+            if not members:
+                self.diagnostics.add(
+                    'structure',
+                    '@enum {} has no members; the tag must be on a table of integer '
+                    'constants'.format(colref.name),
+                    colref.file, colref.line)
+                continue
+            # A member is documented iff it carried a doc comment (raw_content); a value-only
+            # member synthesized from a bare assignment has none.
+            undocumented = [m for m in members if not m.raw_content]
+            if 0 < len(undocumented) < len(members):
+                for m in undocumented:
+                    self.diagnostics.add(
+                        'structure',
+                        '@enum member {} has no doc comment, but other members of {} are '
+                        'documented; document all members or none'.format(m.name, colref.name),
+                        m.file, m.line)
+            elif len(undocumented) == len(members):
+                self.diagnostics.add(
+                    'undocumented',
+                    '@enum {} has no documented members'.format(colref.name),
+                    colref.file, colref.line)
+            for member in members:
+                if not is_integer_literal(member.value):
+                    self.diagnostics.add(
+                        'structure',
+                        '@enum member {} is not assigned an integer value'.format(member.name),
+                        member.file, member.line)
+
+
     def parse_manual(self, name: str, f: IO[str]) -> None:
         """
         Parses a markdown file as a manual page.
@@ -557,7 +721,8 @@ class Parser:
 
         # Create the top-level reference for the manual page.  Any lines in the markdown
         # before the first heading will accumulate in this topref's content.
-        topref = ManualRef(self.refs, file=path, line=1, symbol=name, level=-1)
+        topref = ManualRef(self.refs, file=path, line=1, symbol=name, level=-1,
+                           diagnostics=self.diagnostics)
         self._add_reference(topref)
 
         # We craft section symbols based on the heading, but there's nothing that requires
@@ -591,7 +756,8 @@ class Parser:
                         symbol = symbol + str(symbols[symbol] + 1)
                     symbols[symbol] = symbols.get(symbol, 0) + 1
 
-                    ref = SectionRef(self.refs, file=path, line=n, scopes=[topref], symbol=symbol)
+                    ref = SectionRef(self.refs, file=path, line=n, scopes=[topref], symbol=symbol,
+                                     diagnostics=self.diagnostics)
                     ref.heading = heading
                     ref.flags['level'] = level
 
@@ -659,7 +825,11 @@ class Parser:
                     if ref.within in collections:
                         candidates.add(topsym)
                 if len(candidates) > 1:
-                    log.error('%s is @within %s which is ambiguous (in %s)', name, ref.within, ', '.join(candidates))
+                    self.diagnostics.add(
+                        'references',
+                        '{} is @within {} which is ambiguous (in {})'.format(
+                            name, ref.within, ', '.join(candidates)),
+                        ref.file, ref.line)
                 else:
                     # Remember that this ref is @within a different topsym
                     ref.userdata['within_topsym'] = candidates.pop()
@@ -699,7 +869,10 @@ class Parser:
                     ordered.remove(ref)
                     ordered.append(ref)
                 else:
-                    log.error('%s:~%s @order %s requires an anchor reference', ref.file, ref.line, order.whence)
+                    self.diagnostics.add(
+                        'structure',
+                        '@order {} requires an anchor reference'.format(order.whence),
+                        ref.file, ref.line)
             else:
                 for n, other in enumerate(ordered):
                     if other.symbol == order.anchor:
@@ -711,7 +884,10 @@ class Parser:
                             ordered.insert(n+1, ref)
                         break
                 else:
-                    log.error('%s:~%s unknown @order anchor reference %s', ref.file, ref.line, order.anchor)
+                    self.diagnostics.add(
+                        'references',
+                        'unknown @order anchor reference {}'.format(order.anchor),
+                        ref.file, ref.line)
         return first + ordered + last
 
 
@@ -750,11 +926,12 @@ class Parser:
             # We have multiple top-level refs that have a collection with the same name
             # but none of them are the same topref as the given colref.  So we can't
             # reliably resolve the element list for this collection.
-            log.warning(
-                'collection "%s" referenced by %s is ambiguous as it exists '
-                'in multiple classes or modules (%s) but %s lacks documented %ss',
-                colref.name, topsym, ', '.join(found), topsym, typ.type
-            )
+            self.diagnostics.add(
+                'references',
+                'collection "{}" referenced by {} is ambiguous as it exists in multiple '
+                'classes or modules ({}) but {} lacks documented {}s'.format(
+                    colref.name, topsym, ', '.join(found), topsym, typ.type),
+                colref.file, colref.line)
 
         elems: list[RefT] = []
         for ref in self.parsed[typ]:
@@ -794,7 +971,10 @@ class Parser:
         if ref:
             return self.render_ref_markdown(ref, m.group(3), code=code)
         else:
-            log.warning('%s:~%s: reference "%s" could not be resolved', self.ctx.file, self.ctx.line, m.group(2))
+            self.diagnostics.add(
+                'references',
+                'reference "{}" could not be resolved'.format(m.group(2)),
+                self.ctx.file, self.ctx.line)
             return m.group(3) or m.group(2)
 
 
@@ -845,7 +1025,7 @@ class Parser:
         params: dict[str, tuple[list[str], Content]] = {}
         returns: list[tuple[list[str], Content]] = []
         # These tags take nested content
-        content_tags = tags.AdmonitionTag, tags.ParamTag, tags.ReturnTag
+        content_tags = tags.AdmonitionTag, tags.DeprecatedTag, tags.ParamTag, tags.ReturnTag
 
         # We pass _refs_to_markdown() as a postprocessor for the Content (here as well as
         # below) which will resolve all references when the renderer finally fetches the
@@ -944,6 +1124,14 @@ class Parser:
                     heading = self.refs_to_markdown(tag.title or tag.type.title())
                     content.append(Admonition(tag.type, heading, tagcontent))
                     dedent = None
+                elif isinstance(tag, tags.DeprecatedTag):
+                    # Content-side handling for pages whose tags aren't pre-parsed
+                    # (manual pages); elsewhere the flag is set at parse time and the
+                    # prerenderer renders the admonition.
+                    if tag.desc:
+                        tagcontent.md().append(tag.desc)
+                    content.append(deprecated_admonition(tagcontent))
+                    dedent = None
                 elif isinstance(tag, tags.ParamTag):
                     if tag.desc:
                         tagcontent.md().append(tag.desc)
@@ -955,8 +1143,33 @@ class Parser:
                 elif isinstance(tag, tags.SeeTag):
                     refs = [self.resolve_ref(see) for see in tag.refs]
                     content.append(SeeAlso([ref.id for ref in refs if ref]))
+                elif isinstance(tag, tags.SinceTag):
+                    # Content-side handling for manual pages, whose tags aren't pre-parsed:
+                    # @since is a flag rendered as a stamp on the section heading (as on
+                    # source elements), so set it on the current section ref -- with the same
+                    # single-version rule -- rather than emitting content.
+                    secref = self.ctx.ref
+                    if not tag.version:
+                        self.diagnostics.add(
+                            'structure', '@since requires a version, ignoring',
+                            self.ctx.file, n)
+                    elif secref is not None and 'since' in secref.flags:
+                        self.diagnostics.add(
+                            'structure',
+                            'repeated @since (already {}), ignoring {}'.format(
+                                secref.flags['since'], tag.version),
+                            self.ctx.file, n)
+                    elif secref is not None:
+                        secref.flags['since'] = tag.version
                 else:
-                    log.error('%s:%s: unknown tag @%s or missing arguments', self.ctx.file, n, tag)
+                    # An UnrecognizedTag's .type is the constant 'unrecognized'; its real
+                    # spelling lives in .name.  A recognized-but-misplaced tag has no .name,
+                    # and its .type is the useful identifier.
+                    name = tag.name if isinstance(tag, tags.UnrecognizedTag) else tag.type
+                    self.diagnostics.add(
+                        'structure',
+                        'unknown tag @{} or missing arguments'.format(name),
+                        self.ctx.file, n)
 
             elif line is not None:
                 dedent = indent if dedent is None else dedent

@@ -131,6 +131,11 @@ class LuaLSRenderer(Renderer):
             if isinstance(elem, Markdown):
                 lines.extend(self._strip_links(elem.get()).split('\n'))
             elif isinstance(elem, Admonition):
+                if elem.type == 'deprecated':
+                    # The luals renderer emits a native ---@deprecated, so keep only the
+                    # admonition's (already-resolved) explanation, not its title.
+                    lines.extend(self._content_to_lines(elem.content))
+                    continue
                 title = self._strip_links(elem.title) if elem.title else elem.type.title()
                 lines.append('**{}**'.format(title))
                 lines.extend(self._content_to_lines(elem.content))
@@ -163,6 +168,25 @@ class LuaLSRenderer(Renderer):
         for line in lines:
             out('---' + line if line.strip() else '---')
 
+    def _emit_deprecated(self, out: Callable[[str], None], ref: Reference) -> None:
+        """
+        Emits LuaLS's native ---@deprecated for an element flagged @deprecated, so the
+        language server strikes through and warns on its use.  The explanation is already
+        in the element's content (the prerender's Deprecated admonition, which
+        _content_to_lines renders without its title), so this adds only the annotation.
+        """
+        if 'deprecated' in ref.flags:
+            out('---@deprecated')
+
+    def _emit_since(self, out: Callable[[str], None], ref: Reference) -> None:
+        """
+        LuaLS has no native @since, so record the version as a plain doc line.  (@since
+        isn't on this branch yet; this is dormant until it lands.)
+        """
+        version = ref.flags.get('since')
+        if version:
+            out('--- Since {}.'.format(version))
+
     def _field_lhs(self, ref: FieldRef) -> str:
         """
         Returns the Lua assignment target for a field.  Fields scoped directly to an
@@ -180,6 +204,8 @@ class LuaLSRenderer(Renderer):
         if ref.meta:
             lines.append('*{}*'.format(self._strip_links(ref.meta)))
         self._emit_doc(out, lines)
+        self._emit_deprecated(out, ref)
+        self._emit_since(out, ref)
         typ = self._map_type(ref.types) if ref.types else default_type
         out('---@type {}'.format(typ))
         out('{} = nil'.format(self._field_lhs(ref)))
@@ -188,6 +214,8 @@ class LuaLSRenderer(Renderer):
     def _emit_function(self, out: Callable[[str], None], ref: FunctionRef) -> None:
         self.ctx.update(ref=ref)
         self._emit_doc(out, self._content_to_lines(ref.content))
+        self._emit_deprecated(out, ref)
+        self._emit_since(out, ref)
         for name, types, doc in ref.params:
             if not types:
                 # The parameter exists in the signature but was never given a type,
@@ -233,6 +261,12 @@ class LuaLSRenderer(Renderer):
         lines = [self._strip_links(col.heading)] if col.heading else []
         lines.extend(self._content_to_lines(col.content))
         self._emit_doc(out, lines)
+        self._emit_deprecated(out, col)
+        self._emit_since(out, col)
+        if col.flags.get('enum'):
+            # A closed enumeration maps to LuaLS's native ---@enum.
+            self._emit_enum(out, col)
+            return
         # Model the table as a class so its name resolves in a type position (e.g.
         # `@treturn SomeEnum`) and its members can be accessed.  Members default to the
         # same permissive 'any' as class fields: a @table is not necessarily an integer
@@ -242,6 +276,31 @@ class LuaLSRenderer(Renderer):
         out('{} = {{}}'.format(col.name))
         out('')
         self._emit_members(out, col, DEFAULT_FIELD_TYPE)
+
+    def _emit_enum(self, out: Callable[[str], None], col: CollectionRef) -> None:
+        """
+        Emits LuaLS's native ---@enum: the annotation precedes a table literal whose keys
+        are the members, so the language server treats membership as closed -- an undefined
+        member, or a raw value used where the enum type is expected, is reported.  Members
+        keep their integer values and doc comments.
+        """
+        out('---@enum {}'.format(col.name))
+        out('{} = {{'.format(col.name))
+        for ref in col.fields:
+            self.ctx.update(ref=ref)
+            doc = self._content_to_lines(ref.content)
+            while doc and not doc[0].strip():
+                doc.pop(0)
+            while doc and not doc[-1].strip():
+                doc.pop()
+            for line in doc:
+                out('    ---' + line if line.strip() else '    ---')
+            if 'deprecated' in ref.flags:
+                out('    ---@deprecated')
+            value = ref.value if ref.value is not None else 'nil'
+            out('    {} = {},'.format(ref.symbol, value))
+        out('}')
+        out('')
 
     def _doc_mixins(self, topref: ClassRef) -> List[str]:
         """
@@ -299,6 +358,8 @@ class LuaLSRenderer(Renderer):
     def _emit_class(self, out: Callable[[str], None], topref: ClassRef) -> None:
         self.ctx.update(ref=topref)
         self._emit_doc(out, self._content_to_lines(topref.content))
+        self._emit_deprecated(out, topref)
+        self._emit_since(out, topref)
         decl = '---@class {}'.format(topref.name)
         parents = self._class_parents(topref)
         if parents:
@@ -320,6 +381,8 @@ class LuaLSRenderer(Renderer):
         # qualified members (module.foo) resolve.
         if not topref.implicit:
             self._emit_doc(out, self._content_to_lines(topref.content))
+            self._emit_deprecated(out, topref)
+            self._emit_since(out, topref)
             out('{} = {{}}'.format(topref.name))
             out('')
         for col in topref.collections:

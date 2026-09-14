@@ -65,6 +65,10 @@ class TableTag(CollectionTag):
     pass
 
 @dataclass
+class EnumTag(TableTag):
+    pass
+
+@dataclass
 class WithinTag(Tag):
     name: str
 
@@ -86,12 +90,20 @@ class FullnamesTag(Tag):
     pass
 
 @dataclass
+class DeprecatedTag(Tag):
+    desc: Optional[str] = None
+
+@dataclass
 class InheritsTag(Tag):
-    superclass: str
+    superclasses: List[str]
 
 @dataclass
 class MetaTag(Tag):
     value: str
+
+@dataclass
+class SinceTag(Tag):
+    version: Optional[str] = None
 
 @dataclass
 class ScopeTag(Tag):
@@ -177,7 +189,7 @@ class TagParser:
     # LuaDox's annotations.  See _get_tag_map().
     TAGMAP: TagMapType = {
         'module': (ModuleTag, {'name': str}),
-        'class': (ClassTag, {'name': str, 'superclass': Optional[str]}),
+        'class': (ClassTag, {'name': str, 'superclass': Optional[List[str]]}),
         'section': (SectionTag, {'name': str}),
         'table': (TableTag, {'name': str}),
         'within': (WithinTag, {'name': str}),
@@ -185,8 +197,11 @@ class TagParser:
         'alias': (AliasTag, {'name': str}),
         'compact': (CompactTag, {'elements': Optional[List[str]]}),
         'fullnames': (FullnamesTag, {}),
-        'inherits': (InheritsTag, {'superclass': str}),
+        'deprecated': (DeprecatedTag, {'desc': Optional[VarString]}),
+        'enum': (EnumTag, {'name': str}),
+        'inherits': (InheritsTag, {'superclasses': List[str]}),
         'meta': (MetaTag, {'value': str}),
+        'since': (SinceTag, {'version': Optional[VarString]}),
         'scope': (ScopeTag, {'name': str}),
         'rename': (RenameTag, {'name': str}),
         'display': (DisplayTag, {'name': str}),
@@ -313,7 +328,23 @@ class TagParser:
             # implicit @inherits.
             assert 'superclass' in kwargs, 'class name ends with colon but tag is missing parent class argument'
             yield ClassTag(name=kwargs['name'].rstrip(':'))
-            yield InheritsTag(superclass=kwargs['superclass'])
+            yield InheritsTag(superclasses=kwargs['superclass'])
         else:
+            if tagcls == ClassTag and 'superclass' in kwargs:
+                # ClassTag has no superclass field of its own -- the argument exists only
+                # to feed the colon form handled above.  With no colon attached to the
+                # class name there is nothing to attach it to, and passing it through
+                # would raise TypeError from the dataclass constructor, which escapes as
+                # an unhandled traceback.  Fail as a ParseError instead.
+                name = kwargs['name'].rstrip(':')
+                extra = kwargs['superclass']
+                if not extra.strip(':'):
+                    detail = ('the colon must be attached to the class name, as '
+                              '"@class {}: parent"'.format(name))
+                else:
+                    detail = ('write "@class {}: {}" to declare a parent, or use a '
+                              'separate @inherits tag'.format(name, extra))
+                raise AssertionError(
+                    'unexpected argument after the class name; ' + detail)
             yield tagcls(**kwargs)
 

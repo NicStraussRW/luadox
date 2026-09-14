@@ -282,12 +282,14 @@ Here is a summary of LuaDox tags, with more details below the table:
 | `@class` | Top-level collection | Like `@module` but for classes, which are also given their own separate documentation pages. See also `@inherits`.  | `@class xyz.SomeClass` |
 | `@section` |  Collection | Organizes documented elements such as fields, functions, and tables into a visually distinct group with a heading and arbitrary preamble. Sections can't be nested within other sections; a `@section` tag always creates a *new* section within a top-level collection. | `@section utils.files` |
 | `@table` | Nested collection | Declares a new collection containing only fields (not functions like other collections), and allows nesting where field names are fully qualified based on the encapsulating table(s). In most common cases, `@table` isn't needed and `@section` will suffice. | `@table constants` |
-| `@inherits` | `@class` modifier | Indicates that the current class is subclassed from another class. This influences how references are resolved (superclasses are searched) and the rendered class page includes a visual of the class hierarchy. | `@inherits xyz.BaseClass` |
+| `@enum` | Nested collection | Like `@table`, but declares the collection to be a closed enumeration whose members are exactly the fields assigned in its table constructor, each with a literal value. Renderers with an enumeration representation treat membership as closed. | `@enum xyz.FieldOfViewType` |
+| `@inherits` | `@class` modifier | Indicates that the current class is subclassed from one or more other classes (repeat the tag or list several parents). The first parent's lineage is searched when resolving references, all parents are listed on the class page, and the hierarchy is shown as a tree. | `@inherits xyz.BaseClass` |
 | `@tparam` | Function modifier | Documents a typed parameter of the function definition that follows | `@tparam number\|nil w the width of the image, or nil to derive it from height and aspect` |
 | `@treturn` | Function modifier | Documents a return value of the function definition that follows | `@treturn bool true if successful, false otherwise` |
 | `@see` | Section modifier | Adds a styled "See also" line linking to one or more space-delimited references | `@see ref1 ref2` |
 | `@type` | Field modifier | Documents the type of the field definition that follows | `@type table\|nil` |
 | `@meta` | Field modifier | Documents arbitrary information for the field definition that follows | `@meta read/write` |
+| `@since` | Element modifier | Records the version the element first appeared in, rendered as a lightweight *since* stamp. | `@since 1.2.0` |
 | `@within` | Function/field modifier | Relocates the field or function to another collection while preserving its name. | `@within someothermodule` |
 | `@order` | Element modifier | Normally elements are documented in the order they appear in source, but `@order` allows changing the position of an element relative to other elements in the same rendered page. | `@order before somefunc` |
 | `@compact` | Collection modifier | Normally, fields and functions in a collection are shown first in summary table form and then broken out later with full documentation. `@compact` controls whether fields and/or functions should *only* show in tabular form. Useful for elements with smaller comments, such as a table of constants. Without arguments, both functions and fields will be shown in compact form, but you can specify `fields` or `functions` as an argument to compact just one of them. | `@compact fields` |
@@ -296,6 +298,7 @@ Here is a summary of LuaDox tags, with more details below the table:
 | `@rename` | Element modifier | Overrides *both* the display name and actual name of the element, affecting both its presentation in rendered pages as well as how the element is referenced. | `@rename different_function` |
 | `@scope` | Element modifier | Changes the scope of non top-level elements (i.e. functions, fields, and tables, but not classes or modules), affecting both the element's display name and reference name.  A special scope `.` can be used to treat the element as global and will prevent its name from being qualified by the collection it belongs to.  Unlike `@within`, the element is still documented in the same place (class or module page), but its fully qualified name will reflect the given scope name.   | `@scope .` |
 | `@alias` | Element modifier | Adds another name by which the element can be referenced. Does not affect the display name. | `@alias fooconsts` |
+| `@deprecated` | Element modifier | Marks the element as deprecated, with an optional explanation. Renders as a leading Deprecated admonition; the deprecated flag is also carried in the json/yaml output. | `@deprecated Use newThing instead.` |
 | `@code` | Code block | Creates a code block with Lua syntax highlighting.  Any contents indented below the `@code` line will be included in the code block. | (See below.) |
 | `@example` | Code block | Like `@code` but adds an "Example" heading just above the code block | (See `@code`) |
 | `@usage` | Code block | Like `@code` but adds an "Usage" heading just above the code block | (See `@code`) |
@@ -390,25 +393,89 @@ xyz.os = {
 }
 ```
 
+### `@deprecated`
+
+Marks the documented element as deprecated, with an optional explanation that may
+contain references:
+
+```lua
+--- Old way to do the thing.
+--- @deprecated Use @{newThing} instead.
+function Api:oldThing()
+end
+```
+
+The explanation is the rest of the tag's line; repeat `@deprecated` to give several
+reasons.  Every renderer shows a leading *Deprecated* admonition with the explanation,
+and the json and yaml renderers additionally carry a `deprecated` field on the element
+so it can be detected without parsing the admonition.  When migrating existing
+hand-written "deprecated" warnings to the tag, migrate each element in one step -- an
+element carrying both spellings renders two admonitions.
+
+In a docstring the explanation is the tag's line only; an indented continuation line
+falls into the element body rather than the admonition.  On a manually-authored page
+`@deprecated` is a content tag, so an indented continuation does nest inside the box.
+
+### `@enum`
+
+A variant of `@table` that declares the collection to be a closed enumeration: its
+members are exactly the fields assigned in the table constructor, each with an integer
+value.  Like `@table`, it introduces a named nested collection, so it is used in place
+of `@table`, not alongside it.
+
+```lua
+--- Field of view type.
+--- @enum FieldOfViewType
+FieldOfViewType = {
+    --- Horizontal field of view.
+    XFov = 0,
+    --- Vertical field of view.
+    YFov = 1,
+}
+```
+
+Members must be assigned an **integer** literal (decimal or hex); a float, string,
+reference or expression is rejected.  The renderers surface each member's value, and a
+native-enum renderer can treat membership as closed.
+
+Membership follows the assignment, not the documentation -- an undocumented member is still
+emitted (value only), so autogenerated enums whose C++ enumerators lack comments aren't
+dropped.  Documentation should be consistent per enum, though: a *partly* documented enum is
+a `structure` error, and a fully undocumented one falls under the separate `undocumented`
+category.  An `@enum` can't nest a `@table`/`@enum`, and a duplicate member is a conflict.
+
+Members are read line by line, so the constructor must span multiple lines -- a single-line
+`{ XFov = 0, YFov = 1 }` constructor yields no parsed members.
+
 ### `@inherits`
 
 Used within the context of a `@class` block to declare that the class has been derived
-from some other class.  The rendered HTML for the class page will include a tree showing
-the full class hierarchy.
+from one or more other classes.  The rendered HTML for the class page will include a tree
+showing the class hierarchy (following the first parent).
 
-The `@inherits` tag takes a single argument that is the name of the immediate superclass.
+The `@inherits` tag takes one or more parent class names.  Multiple parents can be given
+on a single tag or across several `@inherits` tags.  A class with more than one parent
+lists them all -- the HTML page shows an "Inherits" list and the JSON output a `parents`
+array -- while the class hierarchy tree, and reference resolution (below), follow only
+the first parent's lineage.
 
 
 ```lua
 --- @class xyz.Subclass
 -- @inherits xyz.BaseClass
+
+--- @class xyz.Mixed
+-- @inherits xyz.BaseClass xyz.OtherParent
+
+--- @class xyz.Shorthand: xyz.BaseClass, xyz.OtherParent
 ```
 
 Unqualified references made within the class documentation (all sections, fields,
-functions etc. for that class) will search for the name up the class's hierarchy.
-If a name is defined in both the current class and one of the superclasses, the
-unqualified name will refer to the current class, and a fully qualified name must
-be used to link to the superclass's field/function.
+functions etc. for that class) will search for the name up the class's hierarchy --
+that is, the first parent and its ancestors (additional parents are listed but not
+searched for reference resolution).  If a name is defined in both the current class and
+one of those superclasses, the unqualified name will refer to the current class, and a
+fully qualified name must be used to link to the superclass's field/function.
 
 
 ### `@tparam`
@@ -510,6 +577,28 @@ defaults = {
    w = 640
 }
 ```
+
+### `@since`
+
+Records the version in which the documented element first appeared.  It takes the form
+`@since <version>` where `<version>` is the rest of the line, and applies to any element
+— a class, function, field, or table.
+
+```lua
+--- Enables the widget.
+--- @since 1.4.0
+function Widget:enable()
+end
+```
+
+Unlike `@deprecated`, which renders a prominent admonition, `@since` renders as an
+unobtrusive *since* stamp beside the element (and is carried in the json/yaml output as a
+`since` field), since it is reference information rather than a warning.  It applies to
+elements documented in Lua source and to manually-authored page headings alike.
+
+An element records a single version, so LuaDox reports a `structure` diagnostic for a
+`@since` with no version and for a repeated `@since` on the same element (the first
+version is kept).
 
 ### `@within`
 
@@ -1140,15 +1229,28 @@ The categories currently defined are:
 * `snippets`: a file referenced by `@code`, `@example` or `@usage` couldn't be read,
    because it's missing, because `snippet_path` isn't configured, or because it isn't
    decodable using the configured `encoding`.
+* `references`: a name in the documentation doesn't resolve or is ambiguous -- an
+   inline `@{ref}`, an `@inherits` parent, an `@order` anchor, or an ambiguous
+   `@within`/collection reference -- so a link or relationship is dropped.
+* `conflicts`: two documented elements collide -- duplicate reference names, a class
+   or module name conflict, or an element whose owning class or module can't be
+   determined -- so one of them is dropped or orphaned.
+* `structure`: a documentation block is malformed -- an unrecognized or malformed tag,
+   a comment block not connected to any section, an element defined before the previous
+   block terminated, an `@order` without an anchor, or an inconsistent `@enum` (partly
+   documented, empty, or with a non-integer or nested member) -- so content is ignored or
+   attached to the wrong element.
 * `types`: a type name in the documentation can't be rendered as a valid language server
    type (`luals` renderer only), because it uses C++ scope syntax such as `A::B`, or
    because it names neither a documented class or table nor a built-in type.
 * `untyped`: a function parameter present in the signature has no documented type
    (`luals` renderer only), so it can only be rendered as `any`.  Undocumented return
    types are not reported, being indistinguishable from a function that returns nothing.
+* `undocumented`: an `@enum` has no documented members at all -- common for autogenerated
+   enums, so it's kept separate from `structure` and can be accepted on its own.
 
-Only these categories feed the exit code.  Other problems LuaDox reports -- unresolved
-cross references, for instance -- are logged but don't affect it.
+Only these categories feed the exit code.  Other problems LuaDox reports are logged
+but don't affect it.
 
 ## Docker Image
 

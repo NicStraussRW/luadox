@@ -14,6 +14,7 @@
 
 __all__ = [
     'Sentinel', 'Content', 'ContentFragment', 'Markdown', 'Admonition', 'SeeAlso',
+    'deprecated_admonition',
     'recache', 'get_first_sentence', 'get_indent_level', 'strip_trailing_comment',
     'files_str_to_list',
 ]
@@ -100,6 +101,16 @@ class Admonition(ContentFragment):
     content: 'Content'
 
 
+def deprecated_admonition(body: 'Content') -> Admonition:
+    """
+    The admonition that renders a @deprecated element, built in one place so the flag
+    path and the manual-page content path can't drift apart.  Its own 'deprecated' type
+    (rather than a generic warning) gives it distinct styling and a self-describing level
+    in the structured renderers.
+    """
+    return Admonition('deprecated', 'Deprecated', body)
+
+
 @dataclass
 class SeeAlso(ContentFragment):
     """
@@ -123,22 +134,30 @@ class Content(List[ContentFragment]):
         self._md_postprocess = postprocess
         self._first = None
 
-    def get_first_sentence(self, pop=False) -> str:
+    def get_first_sentence(self, pop=False, skip_leading=False) -> str:
         """
         Returns the first sentence from the content.  If pop is True then the content
-        is updated in-place to remove the sentence that was returned.
+        is updated in-place to remove the sentence that was returned.  If skip_leading
+        is True, leading non-Markdown fragments (e.g. a prerendered Deprecated
+        admonition) are skipped so they can't hide an element's summary sentence;
+        otherwise a leading non-Markdown fragment yields an empty string.
         """
-        if len(self) == 0:
-            return ''
-        e = self[0]
-        if not isinstance(e, Markdown):
+        if skip_leading:
+            for n, e in enumerate(self):
+                if isinstance(e, Markdown):
+                    break
+            else:
+                return ''
+        elif self and isinstance(self[0], Markdown):
+            n, e = 0, self[0]
+        else:
             return ''
         first, remaining = get_first_sentence(e.get())
         if pop:
             if remaining:
-                self[0] = Markdown(remaining)
+                self[n] = Markdown(remaining)
             else:
-                self.pop(0)
+                self.pop(n)
         return first
 
     def md(self, postprocess: PostProcessFunc = None) -> Markdown:

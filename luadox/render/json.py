@@ -97,6 +97,10 @@ class JSONRenderer(Renderer):
             'symbol': colref.symbol,
             'heading': colref.heading,
         }
+        if colref.flags.get('since'):
+            section['since'] = colref.flags['since']
+        if 'deprecated' in colref.flags:
+            section['deprecated'] = self.parser.refs_to_markdown(colref.flags['deprecated']) or True
         section.update({k:v for k, v in kwargs.items() if v})
         content = self._render_content(colref.content)
         if content:
@@ -117,16 +121,21 @@ class JSONRenderer(Renderer):
 
     def _render_classmod(self, topref: TopRef) -> Dict[str, Any]:
         hierarchy = None
+        parents = None
         if isinstance(topref, ClassRef):
             h = topref.hierarchy
             if len(h) > 1:
                 hierarchy = [{'name': ref.name, 'refid': ref.id} for ref in h]
+            p = topref.parents
+            if len(p) > 1:
+                parents = [{'name': ref.name, 'refid': ref.id} for ref in p]
 
-        out, sections = self._init_topref(topref, hierarchy=hierarchy)
+        out, sections = self._init_topref(topref, hierarchy=hierarchy, parents=parents)
 
         for colref in topref.collections:
             self.ctx.update(ref=colref)
-            section = self._render_section(colref, compact=colref.compact)
+            section = self._render_section(colref, compact=colref.compact,
+                                           enum=colref.flags.get('enum'))
             sections.append(section)
 
             fields: List[Dict[str, Any]] = []
@@ -173,6 +182,13 @@ class JSONRenderer(Renderer):
             field['types'] = self._render_types(ref.types)
         if ref.meta:
             field['meta'] = ref.meta
+        if ref.flags.get('since'):
+            field['since'] = ref.flags['since']
+        if 'deprecated' in ref.flags:
+            # Presence signals deprecation; the value is the explanation (or true when bare).
+            field['deprecated'] = self.parser.refs_to_markdown(ref.flags['deprecated']) or True
+        if ref.value is not None:
+            field['value'] = ref.value
         content = self._render_content(ref.content)
         if content:
             field['content'] = content

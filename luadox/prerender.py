@@ -46,9 +46,34 @@ class Prerenderer:
                 self._do_classmod(ref)
             elif isinstance(ref, ManualRef):
                 self._do_manual(ref)
+            if isinstance(ref, ClassRef):
+                # An @inherits parent that resolves to no documented class leaves the
+                # class's inheritance incomplete; report it through the diagnostics
+                # collector so it feeds the exit code rather than being dropped silently.
+                for name in ref.flags.get('inherits', []):
+                    if not self.parser.refs.get(name):
+                        self.parser.diagnostics.add(
+                            'references',
+                            '@inherits parent "{}" could not be resolved'.format(name),
+                            ref.file, ref.line)
             toprefs.append(ref)
         toprefs.sort(key=lambda ref: (ref.type, ref.symbol))
         return toprefs
+
+    def _apply_deprecated(self, ref: Reference) -> None:
+        """
+        Renders a @deprecated flag as a leading Deprecated admonition, so every
+        renderer shows it without knowing about the flag.  The flag itself stays for
+        renderers with a native deprecation representation.
+        """
+        if 'deprecated' not in ref.flags:
+            return
+        # The same postprocessor parse_raw_content() gives @warning bodies, so @{ref}
+        # and `ref` in the explanation resolve to links.
+        body = Content(postprocess=self.parser.refs_to_markdown)
+        if ref.flags['deprecated']:
+            body.md().append(ref.flags['deprecated'])
+        ref.content.insert(0, deprecated_admonition(body))
 
 
     def _do_classmod(self, topref: Union[ClassRef, ModuleRef]) -> None:
@@ -67,6 +92,7 @@ class Prerenderer:
 
             colref.heading = heading
             colref.content = content
+            self._apply_deprecated(colref)
             topref.collections.append(colref)
 
             functions = list(self.parser.get_elements_in_collection(FunctionRef, colref))
@@ -83,6 +109,7 @@ class Prerenderer:
                 ref.types = ref.flags.get('type', [])
                 ref.meta = ref.flags.get('meta')
                 ref.content = content
+                self._apply_deprecated(ref)
                 colref.fields.append(ref)
 
 
@@ -100,14 +127,20 @@ class Prerenderer:
                         params.append((param, *paramsdict[param]))
                     except KeyError:
                         params.append((param, [], Content()))
-                        if paramsdict:
-                            log.warning('%s:%s: %s() missing @tparam for "%s" parameter', ref.file, ref.line, ref.name, param)
+                        # Report regardless of whether any other parameter is documented:
+                        # gating only partially documented functions would reward deleting
+                        # the remaining @tparam lines.
+                        self.parser.diagnostics.add(
+                            'untyped',
+                            '{}() missing @tparam for "{}" parameter'.format(ref.name, param),
+                            ref.file, ref.line)
 
                 ref.title = ref.display
                 ref.params = params
                 ref.returns = returns
                 ref.meta = self.parser.refs_to_markdown(ref.flags['meta']) if 'meta' in ref.flags else ''
                 ref.content = content
+                self._apply_deprecated(ref)
                 colref.functions.append(ref)
 
         topref.userdata['empty'] = not has_content
