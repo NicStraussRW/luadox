@@ -19,6 +19,7 @@ import os
 import re
 import mimetypes
 import locale
+from html import escape as html_escape
 from contextlib import contextmanager
 from typing import Union, Tuple, List, Callable, Generator, Type, Optional
 
@@ -162,6 +163,16 @@ class HTMLRenderer(Renderer):
         as section headings, functions, fields, etc.
         """
         return '<a class="permalink" href="#{}" title="Permalink to this definition">¶</a>'.format(id)
+
+    def _since(self, ref: Reference) -> str:
+        """
+        Returns a lightweight 'since <version>' tag for an element carrying @since, or an
+        empty string when it has none.
+        """
+        version = ref.flags.get('since')
+        # Escape the version: it's free-form author text, not markup or a reference, so a
+        # stray '<', '&' or '@{...}' must render as literal text, not inject HTML.
+        return '<span class="tag since">since {}</span>'.format(html_escape(version)) if version else ''
 
     def _deprecated_marker(self, ref: Reference) -> str:
         """
@@ -494,6 +505,9 @@ class HTMLRenderer(Renderer):
             # Manual pages only contain SectionRefs
             assert(isinstance(secref, SectionRef))
             out('<h{} id="{}">{}'.format(secref.level, secref.symbol, secref.heading))
+            since = self._since(secref)
+            if since:
+                out(since)
             out(self._permalink(secref.symbol))
             out('</h{}>'.format(secref.level))
             out(self._content_to_html(secref.content))
@@ -522,6 +536,9 @@ class HTMLRenderer(Renderer):
                 # isn't valid HTML for headings to contain block elements.
                 heading.replace('<p>', '').replace('</p>', '')
             ))
+            since = self._since(colref)
+            if since:
+                out(since)
             out(self._permalink(colref.symbol))
             out('</h2>')
             out('<div class="inner">')
@@ -597,7 +614,7 @@ class HTMLRenderer(Renderer):
                             out('<td class="name"><a href="#{}"><var>{}</var></a>{}{}</td>'.format(ref.name, ref.title, self._enum_value(colref, ref), self._deprecated_marker(ref)))
                         else:
                             link = self._permalink(ref.name)
-                            out('<td class="name"><var id="{}">{}</var>{}{}{}</td>'.format(ref.name, ref.title, self._enum_value(colref, ref), self._deprecated_marker(ref), link))
+                            out('<td class="name"><var id="{}">{}</var>{}{}{}{}</td>'.format(ref.name, ref.title, self._enum_value(colref, ref), self._deprecated_marker(ref), self._since(ref), link))
                         nmeta = fields_meta_columns
                         if ref.types:
                             types = self._types_to_html(ref.types)
@@ -634,8 +651,8 @@ class HTMLRenderer(Renderer):
                         else:
                             link = self._permalink(ref.name)
                             params = ', '.join('<em>{}</em>'.format(param) for param, _, _ in ref.params)
-                            html = '<td class="name"><var id="{}">{}</var>({}){}{}</td>'
-                            out(html.format(ref.name, display, params, self._deprecated_marker(ref), link))
+                            html = '<td class="name"><var id="{}">{}</var>({}){}{}{}</td>'
+                            out(html.format(ref.name, display, params, self._deprecated_marker(ref), self._since(ref), link))
                         meta = functions_meta_columns
                         if ref.meta:
                             out('<td class="meta">{}</td>'.format(ref.meta))
@@ -668,6 +685,9 @@ class HTMLRenderer(Renderer):
                         out('<span class="tag type">{}</span>'.format(types))
                     if ref.meta:
                         out('<span class="tag meta">{}</span>'.format(ref.meta))
+                    since = self._since(ref)
+                    if since:
+                        out(since)
                     out(self._permalink(ref.name))
                     out('</dt>')
                     out('<dd>')
@@ -688,6 +708,9 @@ class HTMLRenderer(Renderer):
                     out('<span class="icon"></span><var>{}</var>({})'.format(ref.display, params))
                     if ref.meta:
                         out('<span class="tag meta">{}</span>'.format(ref.meta))
+                    since = self._since(ref)
+                    if since:
+                        out(since)
                     out(self._permalink(ref.name))
                     out('</dt>')
                     out('<dd>')

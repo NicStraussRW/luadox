@@ -97,6 +97,8 @@ class JSONRenderer(Renderer):
             'symbol': colref.symbol,
             'heading': colref.heading,
         }
+        if colref.flags.get('since'):
+            section['since'] = colref.flags['since']
         if 'deprecated' in colref.flags:
             section['deprecated'] = self.parser.refs_to_markdown(colref.flags['deprecated']) or True
         section.update({k:v for k, v in kwargs.items() if v})
@@ -180,6 +182,8 @@ class JSONRenderer(Renderer):
             field['types'] = self._render_types(ref.types)
         if ref.meta:
             field['meta'] = ref.meta
+        if ref.flags.get('since'):
+            field['since'] = ref.flags['since']
         if 'deprecated' in ref.flags:
             # Presence signals deprecation; the value is the explanation (or true when bare).
             field['deprecated'] = self.parser.refs_to_markdown(ref.flags['deprecated']) or True

@@ -565,6 +565,32 @@ dl.functions dt span.icon::after {
     font-size: 140%;
 }
 
+/* @since renders as a lightweight, muted version stamp everywhere -- quiet
+   metadata, consistent between a heading (source or manual page) and a member,
+   never a pill and no icon. */
+h1 span.tag.since,
+h2 span.tag.since,
+h3 span.tag.since {
+    font-size: 60%;
+    font-weight: normal;
+    color: #888;
+    vertical-align: middle;
+    margin-left: 0.6em;
+}
+dl.fields dt span.tag.since,
+dl.functions dt span.tag.since,
+td.name span.tag.since {
+    border: none;
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    opacity: 1;
+    color: #888;
+    font-weight: normal;
+    font-size: 80%;
+    margin-left: 0.5em;
+}
+
 a.permalink:hover {
     color: #c60f0f !important;
     border: none;
