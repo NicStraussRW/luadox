@@ -416,9 +416,19 @@ beside the member name, and carried in the json/yaml output); a renderer with a 
 enumeration representation can additionally treat membership as closed.
 
 Because a closed enumeration is only meaningful when every member is an integer constant,
-LuaDox reports a `structure` diagnostic for an `@enum` that has no members with an integer
-value (for example, the tag placed on something that isn't an integer table) and for any
-member not assigned an integer value.
+LuaDox reports a `structure` diagnostic for an `@enum` with no documented members (for
+example, the tag placed on something that isn't a table) and for any member not assigned
+an integer value.
+
+Each member needs its own doc comment: an undocumented member is not part of the generated
+enumeration.  A single-line table constructor therefore can't form an `@enum`, since there
+is nowhere to attach the per-member comments.  The doc comment must be a `---` block on the
+line(s) directly above the member; a trailing comment (`XFov = 0, --- ...`), a `--[[ ]]`
+block comment, or a four-or-more-dash line does not document a member -- LuaDox reports the
+member as undocumented rather than silently dropping it.
+
+Enum members are integer constants, so an `@enum` can't contain a nested `@table` or `@enum`,
+and assigning the same member name twice is reported as an error.
 
 ### `@inherits`
 

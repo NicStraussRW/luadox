@@ -206,7 +206,11 @@ class Parser:
         def rhs(match: Match[str]) -> Union[str, None]:
             # ',' and ';' are both legal table separators.
             value = line[match.end():].strip().rstrip(',;').strip()
-            if value.count('(') != value.count(')') or                value.count('{') != value.count('}') or                value.count('[') != value.count(']') or                value.count('"') % 2 or value.count("'") % 2 or                value.endswith(('..', '=')) or value.startswith('function'):
+            if (value.count('(') != value.count(')')
+                    or value.count('{') != value.count('}')
+                    or value.count('[') != value.count(']')
+                    or value.count('"') % 2 or value.count("'") % 2
+                    or value.endswith(('..', '=')) or value.startswith('function')):
                 # The expression continues on the next line (or the line was cut at a
                 # '--' inside a string, or the value is a function), so there is no
                 # usable literal here.
@@ -415,8 +419,25 @@ class Parser:
                     # Will decrement below if we don't end up handling this tag now.
                     ntags += 1
                     if isinstance(tag, tags.CollectionTag):
+                        if (isinstance(tag, tags.TableTag)
+                                and isinstance(scopes[-1], TableRef)
+                                and scopes[-1].flags.get('enum')):
+                            # A nested @table/@enum inside an @enum takes a constructor key
+                            # that can never be an integer member, and -- like an undocumented
+                            # member -- would drop out of the closed enumeration silently.
+                            # scopes[-1] is still the enclosing enum here (the nested scope
+                            # isn't pushed until below), which is the only place the nesting
+                            # is visible: the nested collection doesn't record it as a parent.
+                            self.diagnostics.add(
+                                'structure',
+                                '@enum {} cannot contain a nested {} ({}); enum members must '
+                                'be integer constants'.format(
+                                    scopes[-1].name,
+                                    'enum' if isinstance(tag, tags.EnumTag) else 'table',
+                                    tag.name),
+                                path, n)
                         ref = COLLECTION_TAGS[type(tag)].clone_from(
-                            ref, 
+                            ref,
                             line=n,
                             scopes=scopes,
                             symbol=tag.name,
@@ -528,6 +549,16 @@ class Parser:
                     if m:
                         requires.append(m.group(1))
 
+                    # For an @enum, record every name assigned in the table constructor --
+                    # documented or not -- so validate_enums can flag members that never got
+                    # a doc comment.  Undocumented members are skipped just below (before they
+                    # can become a FieldRef), so this is the only place they're visible.
+                    enum_scope = scopes[-1]
+                    if isinstance(enum_scope, TableRef) and enum_scope.flags.get('enum'):
+                        member_name, _ = self._parse_field(line)
+                        if member_name:
+                            enum_scope.flags.setdefault('enum_members', []).append((member_name, n))
+
                     if ref is None:
                         continue
 
@@ -583,27 +614,54 @@ class Parser:
 
     def validate_enums(self) -> None:
         """
-        Reports @enum tables that can't form a closed enumeration: those with no
-        members (e.g. the tag landed on something that isn't an integer table), and
-        members not assigned an integer value.  A closed enumeration needs every
-        member to carry an integer constant (mirroring a C++ enumerator) so
-        renderers with a native enum representation can treat membership as closed.
+        Reports @enum tables that can't form a closed enumeration.  A closed
+        enumeration mirrors a C++ enum: every member has its own doc comment (only
+        documented members are emitted) and is assigned an integer constant, so a
+        renderer with a native enum representation can treat membership as closed.
+        We report:
+
+          * an @enum with no documented members (the tag landed on something that
+            isn't a table, or a single-line constructor with nowhere to attach the
+            per-member doc comments);
+          * a constructor member that was never documented -- it would otherwise
+            drop out of the emitted enumeration silently, breaking the closed-set
+            contract that a native ``---@enum`` relies on;
+          * a documented member not assigned an integer value.
         """
         for colref in self.parsed[TableRef]:
             if not colref.flags.get('enum'):
                 continue
-            # Resolve members the way the renderers do (by name and @within) so
-            # validation can't disagree with what is emitted.
-            members = [ref for ref in self.parsed[FieldRef]
-                       if ref.within == colref.name
-                       or (not ref.within and ref.collection is not None
-                           and ref.collection.name == colref.name)]
+            # Resolve members exactly as the renderers do, so validation can't
+            # disagree with what is emitted.
+            members = self.get_elements_in_collection(FieldRef, colref)
             if not members:
                 self.diagnostics.add(
                     'structure',
-                    '@enum {} has no members with an integer value'.format(colref.name),
+                    '@enum {} has no documented members; the tag must be on a table whose '
+                    'members each have a doc comment'.format(colref.name),
                     colref.file, colref.line)
                 continue
+            # enum_members (recorded during parsing) holds every name assigned in the
+            # constructor, documented or not.  Two silent hazards live here: a name that
+            # never became a documented member (it would vanish from the closed enumeration
+            # without a word) and a name assigned twice (a malformed closed set whose later
+            # assignment quietly wins -- and which the conflicts check misses when one of the
+            # pair is undocumented).  Report both from the constructor names.
+            documented = {member.symbol for member in members}
+            seen: set[str] = set()
+            for name, line in colref.flags.get('enum_members', []):
+                if name in seen:
+                    self.diagnostics.add(
+                        'structure',
+                        '@enum member {} is declared more than once'.format(name),
+                        colref.file, line)
+                elif name not in documented:
+                    self.diagnostics.add(
+                        'structure',
+                        '@enum member {} is not documented; every member of a closed '
+                        'enumeration needs its own doc comment'.format(name),
+                        colref.file, line)
+                seen.add(name)
             for member in members:
                 if not is_integer_literal(member.value):
                     self.diagnostics.add(
