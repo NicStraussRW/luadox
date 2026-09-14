@@ -415,20 +415,20 @@ closed-enum value.  The bundled renderers show each member's value (in the HTML 
 beside the member name, and carried in the json/yaml output); a renderer with a native
 enumeration representation can additionally treat membership as closed.
 
-Because a closed enumeration is only meaningful when every member is an integer constant,
-LuaDox reports a `structure` diagnostic for an `@enum` with no documented members (for
-example, the tag placed on something that isn't a table) and for any member not assigned
-an integer value.
+An `@enum` member exists because it is assigned a value in the constructor, mirroring a C++
+enumerator -- not because it is documented.  A member with its own `---` doc comment carries
+that description into the output; an undocumented member is still emitted, with its value and
+no description.  This matches how enum sources are generated: they come from C++ enumerators,
+many of which have no doc comment, and every enumerator must still appear in the closed
+enumeration.
 
-Each member needs its own doc comment: an undocumented member is not part of the generated
-enumeration.  A single-line table constructor therefore can't form an `@enum`, since there
-is nowhere to attach the per-member comments.  The doc comment must be a `---` block on the
-line(s) directly above the member; a trailing comment (`XFov = 0, --- ...`), a `--[[ ]]`
-block comment, or a four-or-more-dash line does not document a member -- LuaDox reports the
-member as undocumented rather than silently dropping it.
+LuaDox reports a `structure` diagnostic for an `@enum` with no members at all (for example,
+the tag placed on something that isn't a table) and for any member not assigned an integer
+literal.  Enum members are integer constants, so an `@enum` can't contain a nested `@table`
+or `@enum`, and assigning the same member name twice is reported as a conflict.
 
-Enum members are integer constants, so an `@enum` can't contain a nested `@table` or `@enum`,
-and assigning the same member name twice is reported as an error.
+Members are read line by line, so the constructor must span multiple lines -- a single-line
+`{ XFov = 0, YFov = 1 }` constructor yields no parsed members.
 
 ### `@inherits`
 
