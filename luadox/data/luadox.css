@@ -565,21 +565,27 @@ dl.functions dt span.icon::after {
     font-size: 140%;
 }
 
-dl.fields dt span.since::before,
-dl.functions dt span.since::before {
-    filter: saturate(0);
-    opacity: 0.9;
-    content: "🕐";
-    padding-right: 0.5em;
-}
-
-/* On a section heading @since is a lightweight stamp, not a pill. */
+/* @since renders as a lightweight, muted version stamp everywhere -- quiet
+   metadata, consistent between a heading and a member, never a pill and no icon. */
 h2 span.tag.since {
     font-size: 60%;
     font-weight: normal;
     color: #888;
     vertical-align: middle;
     margin-left: 0.6em;
+}
+dl.fields dt span.tag.since,
+dl.functions dt span.tag.since,
+td.name span.tag.since {
+    border: none;
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    opacity: 1;
+    color: #888;
+    font-weight: normal;
+    font-size: 80%;
+    margin-left: 0.5em;
 }
 
 a.permalink:hover {
