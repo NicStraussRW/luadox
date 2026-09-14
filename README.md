@@ -985,7 +985,8 @@ optional arguments:
   -n NAME, --name NAME  Project name (default Lua Project)
   --hometext TEXT       Home link text on the top left of every page
   -r TYPE, --renderer TYPE
-                        How to render the parsed content: html, json, yaml (default: html)
+                        How to render the parsed content: html, json, luals, yaml
+                        (default: html)
   -o PATH, --out PATH   Target path for rendered files, with directories created if
                         necessary. For single-file renderers (e.g. json), this is treated
                         as a file path if it ends with the appropriate extension (e.g.
@@ -1060,8 +1061,12 @@ title = My Lua Project
 # This can be spread across multiple lines if you want, as long as the
 # other lines are indented.
 files = ../app/rtk/widget.lua ../app/rtk/
+# How to render the parsed content: html, json, yaml, or luals (default: html).
+# See the "Output formats" section below for details.
+renderer = html
 # The directory containing the rendered output files, which will be created
-# if necessary.
+# if necessary.  For single-file renderers (json, yaml, luals) this may instead
+# be a file path with the appropriate extension.
 outdir = html
 # Path to a custom css file that will be included on every page.  This will
 # be copied into the outdir.
@@ -1115,6 +1120,85 @@ Link sections are optional. Each section takes these options:
 User-defined links currently can't be specified on the command line, they must
 be defined in the config file.
 
+## Output formats
+
+LuaDox can render the documentation it parses in several formats, selected with the
+`-r/--renderer` command line argument or the `renderer` option in the `[project]` config
+section.
+
+| Renderer | Output | Description |
+|----------|--------|-------------|
+| `html` (default) | a directory | A self-contained, searchable, browsable documentation website. |
+| `json` | a single file | A structured representation of all parsed content, intended for downstream tooling. |
+| `yaml` | a single file | The same structure as `json` but serialized as YAML. |
+| `luals` | a single file | A Lua definition file annotated for the [Lua language server](https://luals.github.io/). |
+
+For the single-file renderers, the output path (`-o`/`out`) may be a file with the
+matching extension (e.g. `api.lua`), or a directory into which a `luadox.<ext>` file is
+written.
+
+### Lua language server definitions
+
+The `luals` renderer emits a single [`---@meta`](https://luals.github.io/wiki/annotations/#meta)
+definition file using [LuaLS/EmmyLua annotations](https://luals.github.io/wiki/annotations/)
+(`---@class`, `---@type`, `---@param`, `---@return`, ...).  This is useful
+when the documented API has no Lua implementation of its own — for example a native API
+exposed to Lua by the host application — and you want editor features (completion, hover
+documentation, and signature help) for code that *uses* the API.
+
+```bash
+$ luadox -r luals -o defs/myapi.lua ../src/*.lua
+```
+
+To make the [Lua language server](https://luals.github.io/) pick up the generated
+definitions, point its library setting at the output, for example in `.luarc.json`:
+
+```json
+{
+    "workspace.library": ["defs/myapi.lua"]
+}
+```
+
+Mappings of note:
+
+* `@class` becomes `---@class` (with `@inherits` rendered as the LuaLS `: Parent` clause),
+  and methods/functions are emitted with their real source-level callable form so
+  `Class:method`, `Class.func`, and bare global functions are all preserved.
+* `@table` collections become a `---@class` whose members are typed fields, so the table
+  name resolves in a type position and its members can be accessed; members without an
+  explicit `@type` default to `any`.
+* Type names are translated to their LuaLS equivalents where applicable (`bool` →
+  `boolean`, `int` → `integer`, `float`/`double` → `number`); other names, including
+  class references, are passed through unchanged.
+* Manual pages have no API surface and are not included in the output.
+
+Scripts are often executed by the host application inside a prepared environment —
+with injected globals, and with members from one class merged onto another at runtime.
+An optional `[luals]` config section lets the generated definitions mirror that so real
+scripts type-check cleanly:
+
+```ini
+[luals]
+# Globals the host injects into the script environment, as `name:type` tokens
+# (whitespace/newline separated).  Each is emitted as a typed global declaration so
+# references to it resolve.
+globals = app:Application
+
+# If set, a class Foo additionally inherits class Foo<mixin_suffix> when that class
+# exists.  This models a convention where a class Foo has a companion class
+# Foo<mixin_suffix> whose members are accessed as Foo.Member.
+mixin_suffix = Mixin
+
+# If set, any cross references on a documentation line containing this phrase are
+# added as extra parent classes.  This captures mixins that aren't in the single
+# inheritance chain -- classes a doc comment lists as
+# "Includes members from @{A}, @{B}, @{C}." -- so members they
+# provide resolve transitively (e.g. Widget.OnClick via a mixin in that phrase).
+mixin_doc_phrase = Includes members from
+```
+
+All three options are optional; without a `[luals]` section the output is unchanged.
+
 ## Diagnostics
 
 Some problems leave the rendered documentation incomplete without stopping LuaDox from
@@ -1156,7 +1240,12 @@ The categories currently defined are:
    block terminated, an `@order` without an anchor, or an inconsistent `@enum` (partly
    documented, empty, or with a non-integer or nested member) -- so content is ignored or
    attached to the wrong element.
-* `untyped`: a function parameter has no `@tparam` documenting it.
+* `types`: a type name in the documentation can't be rendered as a valid language server
+   type (`luals` renderer only), because it uses C++ scope syntax such as `A::B`, or
+   because it names neither a documented class or table nor a built-in type.
+* `untyped`: a function parameter present in the signature has no documented type
+   (`luals` renderer only), so it can only be rendered as `any`.  Undocumented return
+   types are not reported, being indistinguishable from a function that returns nothing.
 * `undocumented`: an `@enum` has no documented members at all -- common for autogenerated
    enums, so it's kept separate from `structure` and can be accepted on its own.
 

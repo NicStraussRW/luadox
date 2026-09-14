@@ -43,8 +43,7 @@ class Diagnostics:
     """
 
     CATEGORIES = frozenset({'snippets', 'references', 'conflicts', 'structure', 'untyped',
-                            'undocumented'})
-
+                            'undocumented', 'types'})
 
     def __init__(self, allowed: Set[str]):
         self.allowed = allowed
