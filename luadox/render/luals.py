@@ -198,7 +198,8 @@ class LuaLSRenderer(Renderer):
             return ref.symbol
         return ref.name
 
-    def _emit_field(self, out: Callable[[str], None], ref: FieldRef, default_type: str) -> None:
+    def _emit_field(self, out: Callable[[str], None], ref: FieldRef,
+                    default_type: str) -> None:
         self.ctx.update(ref=ref)
         lines = self._content_to_lines(ref.content)
         if ref.meta:
@@ -217,14 +218,10 @@ class LuaLSRenderer(Renderer):
         self._emit_deprecated(out, ref)
         self._emit_since(out, ref)
         for name, types, doc in ref.params:
-            if not types:
-                # The parameter exists in the signature but was never given a type,
-                # so it can only be rendered as 'any' -- report the documentation gap.
-                self.parser.diagnostics.add(
-                    'untyped',
-                    'parameter "{}" of {} has no documented type'.format(name, ref.symbol),
-                    self.ctx.file, self.ctx.line
-                )
+            # A parameter with no types is one with no @tparam, which prerender already
+            # reported under 'untyped' for every renderer; reporting it again here would
+            # double every such diagnostic when this renderer is selected.  It still
+            # renders as 'any', which _map_type supplies.
             line = '---@param {} {}'.format(name, self._map_type(types))
             desc = self._inline(doc)
             if desc:
@@ -248,7 +245,8 @@ class LuaLSRenderer(Renderer):
         out('function {}({}) end'.format(ref.symbol, params))
         out('')
 
-    def _emit_members(self, out: Callable[[str], None], col: CollectionRef, default_type: str) -> None:
+    def _emit_members(self, out: Callable[[str], None], col: CollectionRef,
+                      default_type: str) -> None:
         for ref in col.fields:
             self._emit_field(out, ref, default_type)
         for ref in col.functions:
@@ -345,7 +343,10 @@ class LuaLSRenderer(Renderer):
             if name and name != topref.name and name not in parents:
                 parents.append(name)
 
-        add(topref.flags.get('inherits'))
+        # @inherits accumulates every parent into a list, so take them all rather than
+        # the container itself; LuaLS lists multiple parents the same way.
+        for parent in topref.flags.get('inherits') or []:
+            add(parent)
         if self._mixin_suffix:
             candidate = topref.name + self._mixin_suffix
             if candidate in self._classnames:
@@ -463,7 +464,8 @@ class LuaLSRenderer(Renderer):
         declared = set()
         used_roots = set()
         for line in lines:
-            m = re.match(r'([A-Za-z_]\w*) = ', line) or re.match(r'function ([A-Za-z_]\w*)\(', line)
+            m = (re.match(r'([A-Za-z_]\w*) = ', line)
+                 or re.match(r'function ([A-Za-z_]\w*)\(', line))
             if m:
                 declared.add(m.group(1))
             m = re.match(r'(?:function )?([A-Za-z_]\w*)[.:]', line)
