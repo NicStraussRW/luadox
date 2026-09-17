@@ -1168,6 +1168,13 @@ Mappings of note:
 * `@table` collections become a `---@class` whose members are typed fields, so the table
   name resolves in a type position and its members can be accessed; members without an
   explicit `@type` default to `any`.
+* `@enum` collections become LuaLS's native `---@enum`, so the language server treats
+  membership as closed: an undefined member, or a raw value used where the enum type is
+  expected, is reported.  Reserve `@enum` for genuinely closed sets — a table whose values
+  are combined (a bitmask) or extended at runtime should stay a `@table`, which types its
+  members permissively and so does not reject correct code.
+* `@deprecated` becomes `---@deprecated`, so the language server strikes through and warns
+  on use.  `@since` has no LuaLS equivalent and is recorded as a plain doc line.
 * Type names are translated to their LuaLS equivalents where applicable (`bool` →
   `boolean`, `int` → `integer`, `float`/`double` → `number`); other names, including
   class references, are passed through unchanged.

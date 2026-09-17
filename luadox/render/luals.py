@@ -180,8 +180,7 @@ class LuaLSRenderer(Renderer):
 
     def _emit_since(self, out: Callable[[str], None], ref: Reference) -> None:
         """
-        LuaLS has no native @since, so record the version as a plain doc line.  (@since
-        isn't on this branch yet; this is dormant until it lands.)
+        LuaLS has no native @since, so record the version as a plain doc line.
         """
         version = ref.flags.get('since')
         if version:
