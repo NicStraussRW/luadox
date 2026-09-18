@@ -17,7 +17,7 @@ import sys
 import os
 import re
 from configparser import ConfigParser
-from typing import IO, Optional, Union, Tuple, List, Dict, Type, Match
+from typing import IO, Optional, Union, Tuple, List, Dict, Type, Match, Pattern
 
 from . import tags
 from .diagnostics import Diagnostics
@@ -165,6 +165,32 @@ class Parser:
         else:
             return None, None
 
+
+
+    # Lua block openers that must be closed by `end`.  `repeat` is closed by `until`, so it
+    # is tracked separately; a one-line `function() ... end` opens and closes on its line.
+    RE_BLOCK_OPEN: Pattern[str] = re.compile(r'\b(function|if|for|while|do)\b')
+    RE_BLOCK_CLOSE: Pattern[str] = re.compile(r'\bend\b')
+    RE_RETURN_VALUE: Pattern[str] = re.compile(r'\breturn\s+(?!end\b)\S')
+
+    def _returns_value(self, line_number: int) -> bool:
+        """
+        Whether the function whose signature starts at `line_number` returns a value.
+
+        Scans the body to the `end` that closes it, so a `return` belonging to a nested
+        function is not attributed to this one.  A bare `return` (used to leave early)
+        does not count: it yields nothing to document.
+        """
+        depth = 0
+        for line in self.code[line_number - 1:]:
+            code = strip_trailing_comment(line)
+            if depth and self.RE_RETURN_VALUE.search(code):
+                return True
+            depth += len(self.RE_BLOCK_OPEN.findall(code))
+            depth -= len(self.RE_BLOCK_CLOSE.findall(code))
+            if depth <= 0:
+                break
+        return False
 
     def _parse_function(self, line: str) -> ParseFuncResult:
         """
@@ -356,6 +382,9 @@ class Parser:
         # TODO: preprocess all lines within --[[-- ... ]] comment block with --- prefixes
         # in order to support multi-line block comments.
         code = [line.strip() for line in code.splitlines()]
+        # Kept so _returns_value() can look at a function's body, which the feed has not
+        # reached yet when the function's signature is parsed.
+        self.code = code
         self.feed = iter(enumerate(code, 1))
 
         # Current scope, 2-tuple of (type, name) where type can be class, module, or
@@ -611,6 +640,8 @@ class Parser:
                                 file=path, line=n, scopes=scopes[:], symbol=name,
                                 collection=collection, **{kwarg: extra}
                             )
+                            if refcls == FunctionRef and n is not None:
+                                ref.userdata['returns_value'] = self._returns_value(n)
                             break
                     if self._check_disconnected_reference(ref):
                         self._add_reference(ref, modref)

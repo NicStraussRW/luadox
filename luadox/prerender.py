@@ -135,6 +135,14 @@ class Prerenderer:
                             '{}() missing @tparam for "{}" parameter'.format(ref.name, param),
                             ref.file, ref.line)
 
+                # A function that yields a value but documents no @treturn leaves the
+                # caller without a type, the same gap an undocumented parameter leaves.
+                if ref.userdata.get('returns_value') and not returns:
+                    self.parser.diagnostics.add(
+                        'untyped',
+                        '{}() returns a value but has no @treturn'.format(ref.name),
+                        ref.file, ref.line)
+
                 ref.title = ref.display
                 ref.params = params
                 ref.returns = returns
