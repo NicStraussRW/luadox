@@ -588,7 +588,7 @@ class Parser:
                             name, value = self._parse_field(line)
                             # A section stays open to the end of the file, so an assignment in a
                             # later function body sits inside it too.  A member is written as
-                            # `&lt;collection&gt;.&lt;name&gt;`; a local (`ret = ...`) is not, which is what
+                            # `<collection>.<name>`; a local (`ret = ...`) is not, which is what
                             # separates the two without reading the code's structure.
                             qualified = bool(name) and name.startswith('{}.'.format(member_scope.name))
                             # A `__`-prefixed name is a metamethod or internal by Lua convention
