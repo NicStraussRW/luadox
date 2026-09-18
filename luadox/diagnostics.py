@@ -43,7 +43,8 @@ class Diagnostics:
     """
 
     CATEGORIES = frozenset({'snippets', 'references', 'conflicts', 'structure', 'untyped',
-                            'undocumented-enum-members', 'undocumented-section-members'})
+                            'undocumented-enum-members', 'undocumented-section-members',
+                            'compact-block-content'})
 
 
     def __init__(self, allowed: Set[str]):

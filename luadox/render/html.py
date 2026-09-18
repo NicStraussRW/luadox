@@ -190,8 +190,32 @@ class HTMLRenderer(Renderer):
         content = ref.content
         if 'deprecated' in ref.flags and content and isinstance(content[0], Admonition):
             explanation = self._content_to_html(content[0].content)
-            return explanation + self._content_to_html(Content(content[1:]))
-        return self._content_to_html(content)
+            html = explanation + self._content_to_html(Content(content[1:]))
+        else:
+            html = self._content_to_html(content)
+        self._report_content_too_big_for_a_row(ref, html)
+        return html
+
+    # Block-level elements a table row is not laid out for.  A paragraph is fine: the
+    # stylesheet tightens those for a cell.
+    _BLOCK_ELEMENT = re.compile(r'<(pre|h[1-6]|ul|ol|table|blockquote|dl)[\s>]')
+
+    def _report_content_too_big_for_a_row(self, ref: Reference, html: str) -> None:
+        """
+        Reports documentation that the compact layout renders but cannot present: a compact
+        row carries the element's whole documentation, because there is no detail box to put
+        the rest in, so a code block or a list ends up inside a one-line table cell.
+
+        The fix belongs to whoever wrote the tag: drop @compact for that collection, or keep
+        the documentation of its members to prose.
+        """
+        elements = sorted({match.group(1) for match in self._BLOCK_ELEMENT.finditer(html)})
+        if elements:
+            self.parser.diagnostics.add(
+                'compact-block-content',
+                '{} is in a compact collection, so its <{}> renders inside a one-line table '
+                'row'.format(ref.name, '>, <'.join(elements)),
+                ref.file, ref.line)
 
     def _enum_value(self, colref: Reference, ref: Reference) -> str:
         """
