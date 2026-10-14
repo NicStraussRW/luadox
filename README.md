@@ -994,7 +994,8 @@ optional arguments:
   -n NAME, --name NAME  Project name (default Lua Project)
   --hometext TEXT       Home link text on the top left of every page
   -r TYPE, --renderer TYPE
-                        How to render the parsed content: html, json, yaml (default: html)
+                        How to render the parsed content: html, json, luals, yaml
+                        (default: html)
   -o PATH, --out PATH   Target path for rendered files, with directories created if
                         necessary. For single-file renderers (e.g. json), this is treated
                         as a file path if it ends with the appropriate extension (e.g.
@@ -1069,11 +1070,11 @@ title = My Lua Project
 # This can be spread across multiple lines if you want, as long as the
 # other lines are indented.
 files = ../app/rtk/widget.lua ../app/rtk/
-# How to render the parsed content: html, json, or yaml (default: html).
+# How to render the parsed content: html, json, yaml, or luals (default: html).
 # See the "Output formats" section below for details.
 renderer = html
 # The directory containing the rendered output files, which will be created
-# if necessary.  For single-file renderers (json, yaml) this may instead
+# if necessary.  For single-file renderers (json, yaml, luals) this may instead
 # be a file path with the appropriate extension.
 outdir = html
 # Path to a custom css file that will be included on every page.  This will
@@ -1139,11 +1140,99 @@ section.
 | `html` (default) | a directory | A self-contained, searchable, browsable documentation website. |
 | `json` | a single file | A structured representation of all parsed content, intended for downstream tooling. |
 | `yaml` | a single file | The same structure as `json` but serialized as YAML. |
+| `luals` | a single file | A Lua definition file annotated for the [Lua language server](https://luals.github.io/). |
 
 For the single-file renderers, the output path (`-o`/`out`) may be a file with the
 matching extension (e.g. `api.json`), or a directory into which a `luadox.<ext>` file is
 written.  Without an output path, `html` renders into `out/` and the single-file
 renderers write `luadox.<ext>` to the current directory.
+
+### Lua language server definitions
+
+The `luals` renderer emits a single [`---@meta`](https://luals.github.io/wiki/annotations/#meta)
+definition file using [LuaLS/EmmyLua annotations](https://luals.github.io/wiki/annotations/)
+(`---@class`, `---@type`, `---@param`, `---@return`, ...).  This is useful
+when the documented API has no Lua implementation of its own — for example a native API
+exposed to Lua by the host application — and you want editor features (completion, hover
+documentation, and signature help) for code that *uses* the API.
+
+```bash
+$ luadox -r luals -o defs/myapi.lua ../src/*.lua
+```
+
+To make the [Lua language server](https://luals.github.io/) pick up the generated
+definitions, point its library setting at the output, for example in `.luarc.json`:
+
+```json
+{
+    "workspace.library": ["defs/myapi.lua"]
+}
+```
+
+Mappings of note:
+
+* `@class` becomes `---@class` (with `@inherits` rendered as the LuaLS `: Parent` clause),
+  and methods/functions are emitted with their real source-level callable form so
+  `Class:method`, `Class.func`, and bare global functions are all preserved.
+* A function whose `@display` is a callable path is defined under that name, so numbered
+  overloads displayed under one name (`Class:f_1` as `Class:f`) become overloads of it.
+  A function displayed as its class -- a middleclass initializer or a native
+  constructor -- becomes an `---@overload` on the class, so `Class(...)` is type-checked
+  and returns an instance.
+* `@table` collections become a `---@class` whose members are typed fields, so the table
+  name resolves in a type position and its members can be accessed; members without an
+  explicit `@type` default to `any`.
+* `@enum` collections become LuaLS's native `---@enum`, so the language server treats
+  membership as closed: an undefined member, or a value that is not one of the enum's
+  values used where the enum type is expected, is reported.  The check is by value, so a
+  raw number or another enum's member with an equal value is accepted.  Reserve `@enum`
+  for genuinely closed sets — a table whose values are combined (a bitmask) or extended at
+  runtime should stay a `@table`, which types its members permissively and so does not
+  reject correct code.
+* `@deprecated` becomes `---@deprecated`, so the language server strikes through and warns
+  on use.  `@since` has no LuaLS equivalent and is recorded as a plain doc line.
+* Type names are translated to their LuaLS equivalents where applicable (`bool` →
+  `boolean`, `int` → `integer`, `float`/`double` → `number`); other names, including
+  class references, are passed through unchanged.
+* Manual pages have no API surface and are not included in the output.
+
+Scripts are often executed by the host application inside a prepared environment —
+with injected globals, and with members from one class merged onto another at runtime.
+An optional `[luals]` config section lets the generated definitions mirror that so real
+scripts type-check cleanly:
+
+```ini
+[luals]
+# Globals the host injects into the script environment, as `name:type` tokens
+# (whitespace/newline separated).  Each is emitted as a typed global declaration so
+# references to it resolve.
+globals = app:Application
+
+# If set, a class Foo additionally inherits class Foo<mixin_suffix> when that class
+# exists.  This models a convention where a class Foo has a companion class
+# Foo<mixin_suffix> whose members are accessed as Foo.Member.
+mixin_suffix = Mixin
+
+# If set, any cross references on a documentation line containing this phrase are
+# added as extra parent classes.  This captures mixins that aren't in the single
+# inheritance chain -- classes a doc comment lists as
+# "Includes members from @{A}, @{B}, @{C}." -- so members they
+# provide resolve transitively (e.g. Widget.OnClick via a mixin in that phrase).
+mixin_doc_phrase = Includes members from
+
+# Classes and tables whose members are added at runtime (for example built by a
+# factory), whitespace/newline separated.  Each accepts any member, so accessing one
+# isn't reported as an undefined field; documented members keep their types.
+open_classes = EventArgs
+
+# What a function with no @treturn returns: `any` (the default), which never rejects
+# correct code using a result the documentation forgot, or `none`, which emits no
+# ---@return so the language server treats the function as returning nothing.  Choose
+# `none` when every returned value is documented, to keep `any` out of chained calls.
+undocumented_returns = any
+```
+
+All options are optional; without a `[luals]` section the output is unchanged.
 
 ## Diagnostics
 
@@ -1186,8 +1275,12 @@ The categories currently defined are:
    block terminated, an `@order` without an anchor, or a malformed `@enum` (empty, or with
    a non-integer or nested member) -- so content is ignored or attached to the wrong
    element.
+* `types`: a type name in the documentation can't be rendered as a valid language server
+   type (`luals` renderer only), because it uses C++ scope syntax such as `A::B`, or
+   because it names neither a documented class or table nor a built-in type.
 * `untyped`: a function parameter in the signature has no `@tparam` documenting it, so it
-   is rendered without a type.  Undocumented return types are not reported, being
+   is rendered without a type (`any` in the `luals` output).  Undocumented return types
+   are not reported, being
    indistinguishable from a function that returns nothing.
 * `undocumented-enum-members`: an `@enum` member has no doc comment.  Reported per member,
    whether the rest of the enum is documented or not -- common for autogenerated enums whose
