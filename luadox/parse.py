@@ -386,6 +386,12 @@ class Parser:
         parse_next_code_line = True
         # Tracks current number of open braces that haven't been closed.
         table_level = 0
+        # Tracks open Lua blocks (function/if/do/repeat), so code in a function body
+        # isn't taken for a section member.  Line-based; doesn't see long strings.
+        block_level = 0
+        re_block_open = recache(r'\b(function|if|do|repeat)\b')
+        re_block_close = recache(r'\b(end|until)\b')
+        re_string = recache(r'"(?:\\.|[^"\\])*"' r"|'(?:\\.|[^'\\])*'")
         # The current Reference object.
         ref: Reference|None = None
         # Reference to the current collection, defaulting to implicit module ref
@@ -564,6 +570,10 @@ class Parser:
                           table_level <= scopes[-1].level:
                         scopes.pop()
                         collection = scopes[-1]
+                # The block level this line starts at, before its own keywords apply.
+                line_block_level = block_level
+                code = re_string.sub('', line)
+                block_level += len(re_block_open.findall(code)) - len(re_block_close.findall(code))
 
                 if parse_next_code_line:
                     # If we're here, we have a non-comment and non-empty line.
@@ -591,11 +601,14 @@ class Parser:
                             # `<collection>.<name>`; a local (`ret = ...`) is not, which is what
                             # separates the two without reading the code's structure.
                             qualified = bool(name) and name.startswith('{}.'.format(member_scope.name))
+                            # A qualified assignment inside a function body (`Foo.counter = 1`)
+                            # is code, not a declaration, so only a top-level one counts.
+                            top_level = line_block_level == 0
                             # A `__`-prefixed name is a metamethod or internal by Lua convention
                             # (`__index`), so it is not swept in undocumented; documenting one
                             # explicitly still emits it, as it always did.
                             internal = bool(name) and name.rsplit('.', 1)[-1].startswith('__')
-                            if name and not internal and (in_enum or qualified):
+                            if name and not internal and (in_enum or (qualified and top_level)):
                                 field = FieldRef(
                                     self.refs, file=path, line=n, scopes=scopes[:],
                                     symbol=name, collection=collection, value=value,
