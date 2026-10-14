@@ -14,7 +14,6 @@
 
 __all__ = ['LuaLSRenderer']
 
-import os
 import re
 import sys
 from typing import Callable, List, Optional, Tuple
@@ -433,18 +432,6 @@ class LuaLSRenderer(Renderer):
             else:
                 self._emit_members(out, col, DEFAULT_FIELD_TYPE)
 
-    def _get_outfile(self, dst: Optional[str], ext: str = '.lua') -> str:
-        if not dst:
-            dst = './luadox' + ext
-            log.warn('"out" is not defined in config file, assuming %s', dst)
-        if not os.path.isfile(dst) and not dst.endswith(ext):
-            dst = os.path.join(dst, 'luadox' + ext)
-        dirname = os.path.dirname(dst)
-        if dirname and not os.path.exists(dirname):
-            os.makedirs(dirname, exist_ok=True)
-        log.info('rendering to %s', dst)
-        return dst
-
     def render(self, toprefs: List[TopRef], dst: Optional[str]) -> None:
         """
         Renders toprefs as a single LuaLS definition file at the given output path
@@ -538,6 +525,6 @@ class LuaLSRenderer(Renderer):
             pos = lines.index('') + 1 if '' in lines else len(lines)
             lines[pos:pos] = insert
 
-        outfile = self._get_outfile(dst)
+        outfile = self._get_outfile(dst, ext='.lua')
         with open(outfile, 'w', encoding='utf-8') as f:
             f.write('\n'.join(lines).rstrip() + '\n')
