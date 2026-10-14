@@ -195,7 +195,9 @@ In `@class` collections, fields are labeled as **attributes**.
 
 Fields can be defined anywhere in code: globally, within tables, within functions, etc.  As long
 as there is a triple-dash documentation block that immediately precedes a non-function assignment,
-it will be added to the current collection as a field.
+it will be added to the current collection as a field.  Inside an explicit `@section` or an
+`@enum`, an undocumented assignment is added too; see [`@section`](#section) and
+[`@enum`](#enum).
 
 ```lua
 --- This will be recognized as a field/attribute
@@ -280,7 +282,7 @@ Here is a summary of LuaDox tags, with more details below the table:
 |-|-|-|-|
 | `@module` | Top-level collection | Declares a module and sets the scope for future documented elements. Modules, like all top-level types, are given separate pages in the rendered documentation. | `@module utils` |
 | `@class` | Top-level collection | Like `@module` but for classes, which are also given their own separate documentation pages. See also `@inherits`.  | `@class xyz.SomeClass` |
-| `@section` |  Collection | Organizes documented elements such as fields, functions, and tables into a visually distinct group with a heading and arbitrary preamble. Sections can't be nested within other sections; a `@section` tag always creates a *new* section within a top-level collection. | `@section utils.files` |
+| `@section` |  Collection | Organizes documented elements such as fields, functions, and tables, plus undocumented top-level fields (see [`@section`](#section)), into a visually distinct group with a heading and arbitrary preamble. Sections can't be nested within other sections; a `@section` tag always creates a *new* section within a top-level collection. | `@section utils.files` |
 | `@table` | Nested collection | Declares a new collection containing only fields (not functions like other collections), and allows nesting where field names are fully qualified based on the encapsulating table(s). In most common cases, `@table` isn't needed and `@section` will suffice. | `@table constants` |
 | `@enum` | Nested collection | Like `@table`, but declares the collection to be a closed enumeration whose members are exactly the fields assigned in its table constructor, each with a literal value. Renderers with an enumeration representation treat membership as closed. | `@enum xyz.FieldOfViewType` |
 | `@inherits` | `@class` modifier | Indicates that the current class is subclassed from one or more other classes (repeat the tag or list several parents). The first parent's lineage is searched when resolving references, all parents are listed on the class page, and the hierarchy is shown as a tree. | `@inherits xyz.BaseClass` |
@@ -363,6 +365,12 @@ function xyz.Widget:_reset()
    -- ...
 end
 ```
+
+A top-level `Class.name = value` assignment inside an explicit `@section` is a member of
+it even without a doc comment, so sections generated from sources that lack comments
+don't silently lose members.  Such a member is emitted with its value only and reported
+under the `undocumented-section-members` diagnostic category.  Locals, assignments inside a
+function body, and `__`-prefixed names such as `__index` aren't swept in this way.
 
 
 ### `@table`
@@ -1135,8 +1143,9 @@ section.
 | `luals` | a single file | A Lua definition file annotated for the [Lua language server](https://luals.github.io/). |
 
 For the single-file renderers, the output path (`-o`/`out`) may be a file with the
-matching extension (e.g. `api.lua`), or a directory into which a `luadox.<ext>` file is
-written.
+matching extension (e.g. `api.json`), or a directory into which a `luadox.<ext>` file is
+written.  Without an output path, `html` renders into `out/` and the single-file
+renderers write `luadox.<ext>` to the current directory.
 
 ### Lua language server definitions
 
@@ -1258,7 +1267,7 @@ The categories currently defined are:
 * `references`: a name in the documentation doesn't resolve or is ambiguous -- an
    inline `@{ref}`, an `@inherits` parent, an `@order` anchor, or an ambiguous
    `@within`/collection reference -- so a link or relationship is dropped.
-* `conflicts`: two documented elements collide -- duplicate reference names, a class
+* `conflicts`: two elements collide -- duplicate reference names, a class
    or module name conflict, or an element whose owning class or module can't be
    determined -- so one of them is dropped or orphaned.
 * `structure`: a documentation block is malformed -- an unrecognized or malformed tag,
@@ -1270,12 +1279,17 @@ The categories currently defined are:
    type (`luals` renderer only), because it uses C++ scope syntax such as `A::B`, or
    because it names neither a documented class or table nor a built-in type.
 * `untyped`: a function parameter in the signature has no `@tparam` documenting it, so it
-   can only be rendered as `any`.  Undocumented return types are not reported, being
+   is rendered without a type (`any` in the `luals` output).  Undocumented return types
+   are not reported, being
    indistinguishable from a function that returns nothing.
 * `undocumented-enum-members`: an `@enum` member has no doc comment.  Reported per member,
    whether the rest of the enum is documented or not -- common for autogenerated enums whose
    C++ enumerators carry no comment -- and kept separate from `structure` so it can be
    accepted on its own without loosening any other check.
+* `undocumented-section-members`: a top-level `Class.name` assignment inside an explicit
+   `@section` has no doc comment.  It is still rendered (value only) and reported per
+   member, so generated sources can accept it on its own, as with
+   `undocumented-enum-members`.
 
 Only these categories feed the exit code.  Other problems LuaDox reports are logged
 but don't affect it.
