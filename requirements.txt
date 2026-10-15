@@ -1,3 +1,5 @@
-commonmark>=0.9.1
-commonmarkextensions>=0.0.6
-pyyaml>=6.0.0
+# Exact pins: the release bundles these into the zipapp, so an unpinned floor would
+# let two builds of the same commit ship different dependencies.
+commonmark==0.9.1
+commonmarkextensions==0.0.6
+pyyaml==6.0.3
