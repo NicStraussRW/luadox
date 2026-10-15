@@ -1,6 +1,6 @@
 # LuaDox - Lua Documentation Generator
 
-**👉 [Download the latest release](https://github.com/jtackaberry/luadox/releases/latest)**
+**👉 [Download the latest release](https://github.com/NicStraussRW/luadox/releases/latest)**
 
 📘 You can find an example of LuaDox's output **[here](https://reapertoolkit.dev)**
 
@@ -959,7 +959,7 @@ are supported in manual pages as well.
 ## Execution
 
 LuaDox is distributed as a single binary that can be downloaded [on the release
-page](https://github.com/jtackaberry/luadox/releases/latest).  On Linux and OS X, the
+page](https://github.com/NicStraussRW/luadox/releases/latest).  On Linux and OS X, the
 binary can be executed directly:
 
 ```bash
@@ -1306,3 +1306,9 @@ Of course, that's a bit cumbersome, having to set up the volume mount and
 working directory, so for command line use the release binary is probably more
 convenient.  However the Docker image can be useful when generating
 documentation as part of a CI/CD pipeline, such as GitHub Actions.
+
+> **Note:** this image is published from the upstream project, not from this fork, so it
+> does not include the features documented above that this fork adds — the `luals`
+> renderer, `@enum`, `@since`, `@deprecated`, and the diagnostics and `allow_incomplete`
+> behaviour. For those, use a [release of this fork](https://github.com/NicStraussRW/luadox/releases/latest),
+> or build an image from this repository with `make docker`.

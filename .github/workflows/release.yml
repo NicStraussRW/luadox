@@ -1,0 +1,47 @@
+name: release
+
+# A release is cut by pushing a tag. The build runs here so it does not depend on
+# anyone's machine; publishing to Artifactory stays manual, so no internal host or
+# credential is ever present in this public repository.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check version.py matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(grep __version__ luadox/version.py | cut -d'"' -f2)
+          if [ "$tag" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version.py ($version)" >&2
+            exit 1
+          fi
+          echo "building luadox $version"
+
+      - name: Build
+        run: make release
+
+      - name: Check the archive is named for the tag
+        run: test -f "build/luadox-${GITHUB_REF_NAME#v}.zip"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            build/luadox-*.zip build/luadox-*.tar.gz \
+            --title "$GITHUB_REF_NAME" --generate-notes
