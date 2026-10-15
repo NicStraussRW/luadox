@@ -1,6 +1,6 @@
 # LuaDox - Lua Documentation Generator
 
-**👉 [Download the latest release](https://github.com/jtackaberry/luadox/releases/latest)**
+**👉 [Download the latest release](https://github.com/NicStraussRW/luadox/releases/latest)**
 
 📘 You can find an example of LuaDox's output **[here](https://reapertoolkit.dev)**
 
@@ -959,7 +959,7 @@ are supported in manual pages as well.
 ## Execution
 
 LuaDox is distributed as a single binary that can be downloaded [on the release
-page](https://github.com/jtackaberry/luadox/releases/latest).  On Linux and OS X, the
+page](https://github.com/NicStraussRW/luadox/releases/latest).  On Linux and OS X, the
 binary can be executed directly:
 
 ```bash
