@@ -41,6 +41,15 @@ docker:
 release: build/luadox
 	cd build && tar zcf $(ARCHIVE).tar.gz luadox
 	cd build && zip $(ARCHIVE).zip luadox
+	@# A consumer that unpacks several tools side by side into one directory needs the
+	@# binary under its own subdirectory. Ship that layout as well, so it does not have
+	@# to be repacked by hand after every release.
+	@# zip adds to an existing archive, so clear a stale one from an earlier build.
+	rm -rf build/stage build/$(ARCHIVE)-tooldir.zip
+	mkdir -p build/stage/luadox
+	cp -p build/luadox build/stage/luadox/luadox
+	cd build/stage && zip -q -r ../$(ARCHIVE)-tooldir.zip luadox
+	rm -rf build/stage
 
 .PHONY: clean
 clean:
