@@ -1,8 +1,8 @@
 name: release
 
 # A release is cut by pushing a tag. The build runs here so it does not depend on
-# anyone's machine; publishing to Artifactory stays manual, so no internal host or
-# credential is ever present in this public repository.
+# anyone's machine. Publishing to a downstream package repository stays manual, so
+# no host or credential of one is ever present in this public repository.
 
 on:
   push:
@@ -35,8 +35,14 @@ jobs:
       - name: Build
         run: make release
 
-      - name: Check the archive is named for the tag
-        run: test -f "build/luadox-${GITHUB_REF_NAME#v}.zip"
+      - name: Check the archives
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          test -f "build/luadox-$v.zip"
+          test -f "build/luadox-$v.tar.gz"
+          # The second zip exists so a consumer unpacking into a shared tools directory
+          # does not have to repack it, so check it really carries that layout.
+          python3 -c "import sys,zipfile; n=zipfile.ZipFile(sys.argv[1]).namelist(); assert 'luadox/luadox' in n, n; assert all(x.startswith('luadox/') for x in n), n; print('tooldir archive ok:', n)" "build/luadox-$v-tooldir.zip"
 
       - name: Publish
         env:
