@@ -73,8 +73,15 @@ Downstream consumers may fetch the release from their own package repository rat
 from GitHub. Uploading it there is a separate, manual step and is deliberately not
 automated here: see the internal release runbook for the destination.
 
-Upload `luadox-<version>-tooldir.zip` as it is built. Repacking it defeats the point of
-the archive and breaks the checksum match between what CI built and what is published.
+Upload `luadox-<version>-tooldir.zip`, **renamed to `luadox-<version>.zip`**. A consumer
+builds the filename it fetches from the tool name and the version it pins, so the
+`-tooldir` suffix only tells the two archives apart on the release page and must not
+survive the upload.
+
+Rename it; do not rebuild or repack it. A rename leaves the bytes untouched, so the
+published copy keeps the same sha256 as the release asset and the two can be compared
+directly. Repacking changes them, and provenance then has to be established by unpacking
+both archives and comparing the binary inside.
 
 ## If the build fails
 
