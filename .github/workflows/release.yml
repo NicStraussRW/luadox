@@ -48,6 +48,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Generate the notes, then neutralise the doc tags in pull request titles so
+          # they are not published as mentions of unrelated accounts. See the script.
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" -q .body > build/notes.md
+          python3 .github/escape-mentions.py build/notes.md
           gh release create "$GITHUB_REF_NAME" \
             build/luadox-*.zip build/luadox-*.tar.gz \
-            --title "$GITHUB_REF_NAME" --generate-notes
+            --title "$GITHUB_REF_NAME" --notes-file build/notes.md
